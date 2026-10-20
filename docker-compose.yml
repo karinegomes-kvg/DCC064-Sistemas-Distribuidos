@@ -63,4 +63,4 @@ services:
       dns_network:
         ipv4_address: 172.20.0.50
     ports:
-    - "5354:5353/udp"
+    - "5354:5353/udp" # Alteração da porta para 5354
