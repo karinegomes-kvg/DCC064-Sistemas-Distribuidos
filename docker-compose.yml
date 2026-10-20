@@ -18,49 +18,49 @@ services:
     environment:
       - DNS_ROLE=ROOT
       - DB_PATH=root_db.json
-  networks:
-    dns_network:
-      ipv4_address: 172.20.0.100
+    networks:
+      dns_network:
+        ipv4_address: 172.20.0.100
 
-tld_dns:
-  image: python:3.12-slim
-  container_name: tld_dns
-  volumes:
-    - .:/app
-  working_dir: /app
-  command: python dns_server.py
-  environment:
-    - DNS_ROLE=TLD
-    - DB_PATH=tld_db.json
-  networks:
-  dns_network:
-  ipv4_address: 172.20.0.101
+  tld_dns:
+    image: python:3.12-slim
+    container_name: tld_dns
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python dns_server.py
+    environment:
+      - DNS_ROLE=TLD
+      - DB_PATH=tld_db.json
+    networks:
+      dns_network:
+        ipv4_address: 172.20.0.101
 
-auth_dns:
-  image: python:3.12-slim
-  container_name: auth_dns
-  volumes:
-    - .:/app
-  working_dir: /app
-  command: python dns_server.py
-  environment:
-    - DNS_ROLE=AUTH
-    - DB_PATH=auth_db.json
-  networks:
-  dns_network:
-  ipv4_address: 172.20.0.102
+  auth_dns:
+    image: python:3.12-slim
+    container_name: auth_dns
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python dns_server.py
+    environment:
+      - DNS_ROLE=AUTH
+      - DB_PATH=auth_db.json
+    networks:
+      dns_network:
+        ipv4_address: 172.20.0.102
 
-local_resolver:
-  image: python:3.12-slim
-  container_name: local_resolver
-  volumes:
-    - .:/app
-  working_dir: /app
-  command: python resolver.py
-  environment:
-    - ROOT_DNS_IP=172.20.0.100
-  networks:
-    dns_network:
-      ipv4_address: 172.20.0.50
-  ports:
-  - "5353:5353/udp"
+  local_resolver:
+    image: python:3.12-slim
+    container_name: local_resolver
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python resolver.py
+    environment:
+      - ROOT_DNS_IP=172.20.0.100
+    networks:
+      dns_network:
+        ipv4_address: 172.20.0.50
+    ports:
+    - "5354:5353/udp"

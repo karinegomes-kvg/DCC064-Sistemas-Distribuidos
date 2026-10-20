@@ -6,6 +6,7 @@ import os
 # Configurações do Resolver Local
 RESOLVER_PORT = 5353
 ROOT_DNS_IP = os.getenv("ROOT_DNS_IP", "172.20.0.100") # closure mechanism
+SERVER_PORT = 5300
 
 # Cache local em memória
 # Estrutura esperada: { "dominio": { "ip": "...", "expires_at": 1786812345, "type": "A" } }
@@ -26,7 +27,13 @@ def check_cache(domain):
 
 def save_to_cache(domain, ip, ttl):
     # TODO: Implementar lógica de salvar no cache calculando o expires_at (time.time() + ttl)
-    pass
+    expires_at = time.time() + ttl
+    cache[domain] = {
+        "ip": ip,
+        "expires_at": expires_at,
+        "ttl": ttl
+    }
+    print(f"[CACHE SAVE] Registrado {domain} -> {ip} por {ttl} segundos.")
 
 def resolve_iterative(domain):
     # Algoritmo de Resolução Iterativa clássico
@@ -40,15 +47,47 @@ def resolve_iterative(domain):
 
     while True:
         # TODO: 1. Montar a mensagem Query JSON com rd=False (iterativa)
-        # TODO: 2. Enviar via UDP para current_dns
-        # TODO: 3. Aguardar a resposta
-        # TODO: 4. Analisar o status retornado:
-        # - Se "SUCCESS": Retornar o IP final e armazenar no Cache local com seu respectivo TTL.
-        # - Se "REFERRAL": Ler o IP do próximo servidor indicado no campo "authority" e atualizar curr
-        # - Se "NXDOMAIN": Encerrar a busca, domínio inexistente.
-
-        # Simulação temporária de quebra de loop infinito para prevenção do esqueleto
-        break
+        query = {
+            "transaction_id": tx_id,
+            "qname": domain,
+            "qtype": "A",
+            "rd": False
+        }
+        try:
+            # TODO: 2. Enviar via UDP para current_dns
+            sock.sendto(json.dumps(query).encode('utf-8'), (current_dns, SERVER_PORT))
+            # TODO: 3. Aguardar a resposta
+            data, _ = sock.recvfrom(4096)
+            response = json.loads(data.decode('utf-8'))
+            status = response.get("status")
+            # TODO: 4. Analisar o status retornado:
+            # - Se "SUCCESS": Retornar o IP final e armazenar no Cache local com seu respectivo TTL.
+            if status == "SUCCESS":
+                if response.get("answer"):
+                    ans = response["answer"][0]
+                    ip = ans["value"]
+                    ttl = ans.get("ttl", 60)
+                    save_to_cache(domain, ip, ttl)
+                    sock.close()
+                    return ip
+            # - Se "REFERRAL": Ler o IP do próximo servidor indicado no campo "authority" e atualizar curr
+            elif status == "REFERRAL":
+                if response.get("authority"):
+                    auth = response["authority"][0]
+                    current_dns = auth["value"]
+                    print(f"[RESOLVER] Indicado para o próximo servidor (Referral): {current_dns}")
+                else:
+                    break
+            # - Se "NXDOMAIN": Encerrar a busca, domínio inexistente.
+            elif status == "NXDOMAIN":
+                print(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
+                break
+        except socket.timeout:
+            print(f"[RESOLVER] Timeout ao consultar o servidor {current_dns}")
+            break
+        except Exception as e:
+            print(f"[RESOLVER] Erro durante a resolução: {e}")
+            break
 
     sock.close()
     return None
