@@ -4,7 +4,7 @@ import time
 import os
 import secrets
 from comunicacao import aguardar_resposta
-from validacao import id_valido, registro_valido
+from validacao import consulta_valida, registro_valido
 
 # Configurações do Resolver Local
 RESOLVER_PORT = 5353
@@ -108,9 +108,44 @@ def resolve_iterative(domain, qtype="A"):
     sock.close()
     return None
 
+def resolver_recursivo(domain, qtype="A"):
+    # O Root fica responsável por consultar os próximos servidores.
+    query = {
+        "transaction_id": secrets.randbits(16),
+        "qname": domain,
+        "qtype": qtype,
+        "rd": True
+    }
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    print(f"[RESOLVER] Iniciando busca recursiva para '{domain}' ({qtype}) pelo Root: {ROOT_DNS_IP}")
+
+    try:
+        sock.sendto(json.dumps(query).encode('utf-8'), (ROOT_DNS_IP, SERVER_PORT))
+        response = aguardar_resposta(sock, query, (ROOT_DNS_IP, SERVER_PORT), 5.0)
+        if response["status"] == "SUCCESS":
+            registro = response["answer"][0].copy()
+            if "ttl" not in registro:
+                if qtype == "NS":
+                    registro["ttl"] = 300
+                else:
+                    registro["ttl"] = 60
+            save_to_cache(domain, registro)
+            return registro
+        elif response["status"] == "NXDOMAIN":
+            print(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
+        else:
+            print("[RESOLVER] O Root retornou encaminhamento em uma consulta recursiva.")
+    except socket.timeout:
+        print(f"[RESOLVER] Timeout ao consultar o servidor {ROOT_DNS_IP}")
+    except Exception as e:
+        print(f"[RESOLVER] Erro durante a resolução: {e}")
+    finally:
+        sock.close()
+    return None
+
 def resolver_consulta(query):
-    if not isinstance(query, dict) or not id_valido(query.get("transaction_id")):
-        print("[RESOLVER] Consulta descartada: ID inválido.")
+    if not consulta_valida(query):
+        print("[RESOLVER] Consulta descartada: ID, domínio ou rd inválido.")
         return None
     domain = query.get("qname")
     qtype = query.get("qtype", "A")
@@ -120,14 +155,17 @@ def resolver_consulta(query):
         "answer": [],
         "authority": []
     }
-    if not isinstance(domain, str) or qtype not in ("A", "NS"):
+    if qtype not in ("A", "NS"):
         return response
 
     # 1. Tenta buscar do cache local primeiro
     registro = check_cache(domain, qtype)
     if registro is None:
-        # 2. Se falhar, dispara a resolução iterativa de rede
-        registro = resolve_iterative(domain, qtype)
+        # 2. Se falhar, faz a busca de rede no modo solicitado
+        if query["rd"]:
+            registro = resolver_recursivo(domain, qtype)
+        else:
+            registro = resolve_iterative(domain, qtype)
     if registro is not None:
         response["status"] = "SUCCESS"
         response["answer"].append(registro)

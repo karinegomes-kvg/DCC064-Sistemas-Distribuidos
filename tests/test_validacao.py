@@ -5,7 +5,8 @@ from unittest.mock import Mock, patch
 
 import dns_server
 import resolver
-from validacao import registro_valido, resposta_valida
+import client_test
+from validacao import consulta_valida, registro_valido, resposta_valida
 
 
 class TestesValidacao(unittest.TestCase):
@@ -38,6 +39,49 @@ class TestesValidacao(unittest.TestCase):
         with patch("socket.socket", return_value=socket_teste):
             resultado = resolver.resolver_consulta(self.consulta(tipo))
         return resultado, socket_teste
+
+    def test_rd_precisa_ser_booleano(self):
+        with patch("socket.socket") as criar_socket, patch("resolver.check_cache") as buscar_cache:
+            for rd in (None, 0, 1, 0.0, 1.0, "false", "true", [], {}):
+                with self.subTest(rd=rd):
+                    consulta = self.consulta(rd=rd)
+                    self.assertFalse(consulta_valida(consulta))
+                    self.assertIsNone(resolver.resolver_consulta(consulta))
+                    self.assertIsNone(dns_server.resolver_consulta(
+                        consulta, {"teste.br": self.registro()}
+                    ))
+            criar_socket.assert_not_called()
+            buscar_cache.assert_not_called()
+
+    def test_qname_precisa_ser_texto_nao_vazio(self):
+        with patch("socket.socket") as criar_socket, patch("resolver.check_cache") as buscar_cache:
+            for nome in ("", " ", "\t\n", None, 1234, True, [], {}):
+                with self.subTest(nome=nome):
+                    consulta = self.consulta()
+                    consulta["qname"] = nome
+                    self.assertFalse(consulta_valida(consulta))
+                    self.assertIsNone(resolver.resolver_consulta(consulta))
+                    self.assertIsNone(dns_server.resolver_consulta(
+                        consulta, {"teste.br": self.registro()}
+                    ))
+            criar_socket.assert_not_called()
+            buscar_cache.assert_not_called()
+
+    def test_consulta_sem_rd_ou_qname_e_descartada(self):
+        for campo in ("rd", "qname"):
+            with self.subTest(campo=campo):
+                consulta = self.consulta()
+                del consulta[campo]
+                self.assertIsNone(resolver.resolver_consulta(consulta))
+                self.assertIsNone(dns_server.resolver_consulta(consulta, {}))
+
+    def test_cliente_valida_dominio_e_rd_antes_de_abrir_socket(self):
+        with patch("socket.socket") as criar_socket:
+            for dominio, rd in (("", False), (" ", True), (None, False),
+                                ("teste.br", "false"), ("teste.br", 1)):
+                with self.subTest(dominio=dominio, rd=rd):
+                    client_test.enviar_consulta(dominio, recursiva=rd)
+            criar_socket.assert_not_called()
 
     def test_aceita_ipv4_em_texto_para_a_e_ns(self):
         for tipo in ("A", "NS"):

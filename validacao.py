@@ -5,6 +5,17 @@ def id_valido(valor):
     return type(valor) is int and 0 <= valor <= 65535
 
 
+def consulta_valida(consulta):
+    if not isinstance(consulta, dict) or not id_valido(consulta.get("transaction_id")):
+        return False
+    nome = consulta.get("qname")
+    if not isinstance(nome, str) or not nome.strip():
+        return False
+    if type(consulta.get("rd")) is not bool:
+        return False
+    return True
+
+
 def registro_valido(registro):
     if not isinstance(registro, dict):
         return False

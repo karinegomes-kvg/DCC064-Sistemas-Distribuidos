@@ -3,7 +3,7 @@ import json
 import os
 import secrets
 from comunicacao import aguardar_resposta
-from validacao import id_valido, registro_valido
+from validacao import consulta_valida, registro_valido
 
 # Porta padrão de escuta dos servidores DNS internos
 PORT = 5300
@@ -36,13 +36,13 @@ def query_upstream(server_ip, qname, qtype, rd):
         sock.close()
 
 def resolver_consulta(query, db):
-    if not isinstance(query, dict) or not id_valido(query.get("transaction_id")):
-        print("[DNS] Consulta descartada: ID inválido.")
+    if not consulta_valida(query):
+        print("[DNS] Consulta descartada: ID, domínio ou rd inválido.")
         return None
     tx_id = query.get("transaction_id")
     qname = query.get("qname")
     qtype = query.get("qtype", "A")
-    recursion_desired = query.get("rd", False)
+    recursion_desired = query["rd"]
     response = {
         "transaction_id": tx_id,
         "status": "NXDOMAIN",
@@ -50,7 +50,7 @@ def resolver_consulta(query, db):
         "authority": []
     }
 
-    if not isinstance(qname, str) or qtype not in ("A", "NS"):
+    if qtype not in ("A", "NS"):
         return response
 
     # TODO: 1. Verificar se o domínio exato ou sufixo correspondente está no DB local

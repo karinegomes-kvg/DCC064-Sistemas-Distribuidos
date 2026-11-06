@@ -47,6 +47,19 @@ python3 client_test.py br --qtype NS
 python3 client_test.py ufjf.br --qtype NS
 ```
 
+Sem opções adicionais, a busca é iterativa. Para usar resolução recursiva:
+
+```bash
+python3 client_test.py www.ufjf.br --recursiva
+python3 client_test.py ufjf.br --qtype NS --recursiva
+```
+
+Nesse modo, o Resolver envia uma consulta com `rd=true` ao Root, que consulta os
+próximos servidores e devolve a resposta final. Para executar a bateria de testes
+inteira nesse modo, use `python3 client_test.py --recursiva`.
+O cache é compartilhado entre os modos. Para observar uma busca recursiva sem
+usar um registro já salvo, reinicie o Resolver com `docker compose restart local_resolver`.
+
 Uma consulta NS para `ufjf.br` recebe o encaminhamento do Root para o TLD;
 o TLD responde com `SUCCESS` e o registro NS em `answer`. Os encaminhamentos
 intermediários continuam usando `REFERRAL` e `authority` para ambos os tipos.
@@ -72,4 +85,10 @@ são conferidos; encaminhamentos precisam indicar uma zona correspondente ao
 domínio consultado. Pacotes incorretos são descartados sem reiniciar o timeout.
 Ao responder ao cliente, o ID original dele é mantido, inclusive nas respostas
 do cache e após encaminhamentos recursivos. Consultas com ID inválido são descartadas.
+
+As consultas precisam informar `rd` como booleano JSON (`true` ou `false`) e
+`qname` como texto não vazio. Valores como `"false"`, `0`, `null`, nome ausente ou
+nome contendo apenas espaços são descartados antes de acessar o cache ou a rede.
+O cliente faz essa validação antes de enviar; o Resolver e os servidores repetem
+a validação ao receber a consulta.
 

@@ -1,11 +1,13 @@
 import json
 import socket
+import runpy
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
 import dns_server
 import resolver
+import client_test
 
 
 class RedeSimulada:
@@ -37,7 +39,10 @@ class SocketSimulado:
         consulta = json.loads(dados.decode("utf-8"))
         self.rede.enviadas.append((endereco[0], consulta))
         self.endereco = endereco
-        self.resposta = dns_server.resolver_consulta(consulta, self.rede.bases[endereco[0]])
+        if endereco == (client_test.RESOLVER_IP, client_test.RESOLVER_PORT):
+            self.resposta = resolver.resolver_consulta(consulta)
+        else:
+            self.resposta = dns_server.resolver_consulta(consulta, self.rede.bases[endereco[0]])
 
     def recvfrom(self, tamanho):
         return json.dumps(self.resposta).encode("utf-8"), self.endereco
@@ -126,6 +131,73 @@ class TestesTiposConsulta(unittest.TestCase):
                 self.assertTrue(self.rede.enviadas)
                 self.assertTrue(all(consulta["qtype"] == qtype and consulta["rd"]
                                     for _, consulta in self.rede.enviadas))
+
+    def test_resolver_respeita_rd_e_percorre_cadeia_recursiva(self):
+        valor_a = self.rede.bases[self.rede.autoritativo]["www.ufjf.br"]["value"]
+        for dominio, tipo, valor, servidores in (
+            ("www.ufjf.br", "A", valor_a,
+             [self.rede.raiz, self.rede.tld, self.rede.autoritativo]),
+            ("ufjf.br", "NS", self.rede.autoritativo, [self.rede.raiz, self.rede.tld]),
+            ("br", "NS", self.rede.tld, [self.rede.raiz]),
+        ):
+            with self.subTest(dominio=dominio, tipo=tipo):
+                self.rede.enviadas.clear()
+                resposta = resolver.resolver_consulta(self.consulta(dominio, tipo, rd=True))
+                self.conferir_resposta(resposta, dominio, tipo, valor)
+                self.assertEqual([ip for ip, _ in self.rede.enviadas], servidores)
+                self.assertTrue(all(consulta["rd"] for _, consulta in self.rede.enviadas))
+                self.assertEqual(resolver.cache[(dominio, tipo)]["registro"]["value"], valor)
+
+    def test_opcao_recursiva_no_cliente_percorre_todo_o_fluxo(self):
+        for dominio, tipo, servidores in (
+            ("www.ufjf.br", "A", [self.rede.raiz, self.rede.tld, self.rede.autoritativo]),
+            ("ufjf.br", "NS", [self.rede.raiz, self.rede.tld]),
+        ):
+            with self.subTest(dominio=dominio, tipo=tipo):
+                resolver.cache.clear()
+                self.rede.enviadas.clear()
+                argumentos = ["client_test.py", dominio, "--qtype", tipo, "--recursiva"]
+                with patch("sys.argv", argumentos):
+                    runpy.run_module("client_test", run_name="__main__")
+                self.assertEqual([ip for ip, _ in self.rede.enviadas],
+                                 [client_test.RESOLVER_IP] + servidores)
+                self.assertTrue(all(consulta["rd"] for _, consulta in self.rede.enviadas))
+                self.assertIn((dominio, tipo), resolver.cache)
+
+    def test_cliente_com_dominio_vazio_nao_inicia_bateria_de_testes(self):
+        with patch("sys.argv", ["client_test.py", ""]), patch("time.sleep") as esperar:
+            runpy.run_module("client_test", run_name="__main__")
+        self.assertEqual(self.rede.enviadas, [])
+        esperar.assert_not_called()
+
+    def test_cache_e_compartilhado_entre_os_modos(self):
+        for primeiro_modo in (False, True):
+            with self.subTest(primeiro_modo=primeiro_modo):
+                resolver.cache.clear()
+                primeira = resolver.resolver_consulta(
+                    self.consulta("www.ufjf.br", "A", rd=primeiro_modo)
+                )
+                self.rede.enviadas.clear()
+                consulta = self.consulta("www.ufjf.br", "A", rd=not primeiro_modo)
+                consulta["transaction_id"] = 123
+                resposta = resolver.resolver_consulta(consulta)
+                self.assertEqual(resposta["status"], "SUCCESS")
+                self.assertEqual(resposta["transaction_id"], 123)
+                self.assertEqual(resposta["answer"][0]["value"], primeira["answer"][0]["value"])
+                self.assertEqual(self.rede.enviadas, [])
+
+    def test_consulta_recursiva_inexistente_retorna_nxdomain(self):
+        for dominio, tipo, servidores in (
+            ("google.com", "A", [self.rede.raiz]),
+            ("www.ufjf.br", "NS", [self.rede.raiz, self.rede.tld, self.rede.autoritativo]),
+        ):
+            with self.subTest(dominio=dominio, tipo=tipo):
+                self.rede.enviadas.clear()
+                resposta = resolver.resolver_consulta(self.consulta(dominio, tipo, rd=True))
+                self.assertEqual(resposta["status"], "NXDOMAIN")
+                self.assertEqual(resposta["transaction_id"], 45182)
+                self.assertEqual([ip for ip, _ in self.rede.enviadas], servidores)
+                self.assertEqual(resolver.cache, {})
 
     def test_recursao_gera_ids_e_restaura_id_da_consulta_original(self):
         with patch("dns_server.secrets.randbits", side_effect=[25, 65535]) as gerar_id:
