@@ -83,6 +83,57 @@ class TestesValidacao(unittest.TestCase):
                     client_test.enviar_consulta(dominio, recursiva=rd)
             criar_socket.assert_not_called()
 
+    def test_resolver_continua_atendendo_apos_pacotes_invalidos(self):
+        resolver.save_to_cache("teste.br", self.registro())
+        socket_teste = Mock()
+        origem = ("127.0.0.1", 40000)
+        outra_origem = ("127.0.0.1", 40001)
+        invalidos = (
+            b"", b"{", b'{"transaction_id": 1234', b"\xff",
+            b"[" * 1500 + b"]" * 1500,
+            b"[]", b"null", b'"texto"', b"123", b"{}",
+            json.dumps(self.consulta(rd="false")).encode("utf-8"),
+        )
+        primeira = self.consulta()
+        segunda = self.consulta()
+        segunda["transaction_id"] = 5678
+        pacotes = [(dados, origem) for dados in invalidos]
+        pacotes.extend([
+            (json.dumps(primeira).encode("utf-8"), origem),
+            (b"\xff", outra_origem),
+            (json.dumps(segunda).encode("utf-8"), outra_origem),
+            KeyboardInterrupt,
+        ])
+        socket_teste.recvfrom.side_effect = pacotes
+        with patch("socket.socket", return_value=socket_teste):
+            with self.assertRaises(KeyboardInterrupt):
+                resolver.main()
+
+        self.assertEqual(socket_teste.sendto.call_count, 2)
+        for chamada, consulta, endereco in zip(
+                socket_teste.sendto.call_args_list, (primeira, segunda), (origem, outra_origem)):
+            dados, destino = chamada.args
+            resposta = json.loads(dados.decode("utf-8"))
+            self.assertEqual(destino, endereco)
+            self.assertEqual(resposta["transaction_id"], consulta["transaction_id"])
+            self.assertEqual(resposta["status"], "SUCCESS")
+            self.assertEqual(resposta["answer"][0]["value"], "192.0.2.1")
+
+    def test_resolver_continua_atendendo_apos_erro_no_envio(self):
+        resolver.save_to_cache("teste.br", self.registro())
+        socket_teste = Mock()
+        origem = ("127.0.0.1", 40000)
+        dados = json.dumps(self.consulta()).encode("utf-8")
+        socket_teste.recvfrom.side_effect = [(dados, origem), (dados, origem), KeyboardInterrupt]
+        socket_teste.sendto.side_effect = [OSError("Falha no envio UDP"), None]
+        with patch("socket.socket", return_value=socket_teste):
+            with self.assertRaises(KeyboardInterrupt):
+                resolver.main()
+        self.assertEqual(socket_teste.sendto.call_count, 2)
+        resposta = json.loads(socket_teste.sendto.call_args.args[0].decode("utf-8"))
+        self.assertEqual(resposta["status"], "SUCCESS")
+        self.assertEqual(resposta["transaction_id"], 1234)
+
     def test_aceita_ipv4_em_texto_para_a_e_ns(self):
         for tipo in ("A", "NS"):
             for valor in ("0.0.0.0", "172.20.0.40", "255.255.255.255"):

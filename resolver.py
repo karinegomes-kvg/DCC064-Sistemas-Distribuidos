@@ -180,11 +180,19 @@ def main():
 
     while True:
         data, addr = sock.recvfrom(4096)
-        query = json.loads(data.decode('utf-8'))
+        # Um pacote inválido não deve interromper o atendimento.
+        try:
+            query = json.loads(data.decode('utf-8'))
+        except (UnicodeDecodeError, ValueError, RecursionError) as e:
+            print(f"[RESOLVER] Pacote inválido de {addr}, descartado: {e}")
+            continue
         response = resolver_consulta(query)
         if response is None:
             continue
-        sock.sendto(json.dumps(response).encode('utf-8'), addr)
+        try:
+            sock.sendto(json.dumps(response).encode('utf-8'), addr)
+        except OSError as e:
+            print(f"[RESOLVER] Erro ao enviar resposta para {addr}: {e}")
 
 if __name__ == "__main__":
     main()

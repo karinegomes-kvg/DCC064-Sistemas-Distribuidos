@@ -92,3 +92,8 @@ nome contendo apenas espaços são descartados antes de acessar o cache ou a red
 O cliente faz essa validação antes de enviar; o Resolver e os servidores repetem
 a validação ao receber a consulta.
 
+Na entrada do Resolver, pacotes com JSON inválido, UTF-8 inválido ou JSON
+profundamente aninhado são registrados e descartados. O processo continua
+atendendo as próximas consultas, inclusive quando ocorre uma falha no envio
+de uma resposta UDP.
+
