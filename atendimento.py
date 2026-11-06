@@ -1,10 +1,12 @@
 import json
 import os
+import socket
 import time
 from queue import Full, Queue
 from threading import Thread
 from validacao import consulta_valida
 from controle_carga import ControleCarga
+from prazos import criar_prazo, tempo_restante
 
 
 NUM_TRABALHADORES = 4
@@ -35,11 +37,17 @@ def atender_consultas(sock, processar_consulta, nome_servidor,
             try:
                 if item is None:
                     return
-                query, addr = item
+                query, addr, prazo = item
                 try:
-                    response = processar_consulta(query)
+                    tempo_restante(prazo)
+                    response = processar_consulta(query, prazo=prazo)
                     if response is not None:
-                        sock.sendto(json.dumps(response).encode('utf-8'), addr)
+                        dados = json.dumps(response).encode('utf-8')
+                        tempo_restante(prazo)
+                        sock.sendto(dados, addr)
+                except socket.timeout:
+                    print(f"[{nome_servidor}] Prazo total esgotado para a consulta "
+                          f"{query['transaction_id']} de {addr}, descartada.")
                 except Exception as e:
                     print(f"[{nome_servidor}] Erro ao processar consulta de {addr}: {e}")
             finally:
@@ -54,6 +62,7 @@ def atender_consultas(sock, processar_consulta, nome_servidor,
 
         while True:
             data, addr = sock.recvfrom(4096)
+            recebido_em = time.monotonic()
             # Limita todos os pacotes, inclusive os inválidos, antes de interpretar o JSON.
             if not controle.aceitar(addr[0]):
                 agora = time.monotonic()
@@ -70,11 +79,12 @@ def atender_consultas(sock, processar_consulta, nome_servidor,
                 print(f"[{nome_servidor}] Pacote inválido de {addr}, descartado: {e}")
                 continue
             if not consulta_valida(query):
-                print(f"[{nome_servidor}] Consulta de {addr} descartada: ID, domínio ou rd inválido.")
+                print(f"[{nome_servidor}] Consulta de {addr} descartada: ID, domínio, rd ou tempo restante inválido.")
                 continue
 
             try:
-                fila.put_nowait((query, addr))
+                prazo = criar_prazo(query, recebido_em)
+                fila.put_nowait((query, addr, prazo))
             except Full:
                 print(f"[{nome_servidor}] Fila cheia, consulta de {addr} descartada.")
                 continue

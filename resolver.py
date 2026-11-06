@@ -6,6 +6,7 @@ import secrets
 from threading import Lock
 from atendimento import atender_consultas
 from comunicacao import aguardar_resposta
+from prazos import criar_prazo, tempo_restante
 from validacao import consulta_valida, registro_valido
 
 # Configurações do Resolver Local
@@ -52,12 +53,13 @@ def save_to_cache(domain, registro):
         }
     print(f"[CACHE SAVE] Registrado {domain} ({registro['type']}) -> {registro['value']} por {ttl} segundos.")
 
-def resolve_iterative(domain, qtype="A"):
+def resolve_iterative(domain, qtype="A", prazo=None):
     # Algoritmo de Resolução Iterativa clássico
     current_dns = ROOT_DNS_IP
+    if prazo is None:
+        prazo = criar_prazo()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5.0) # Timeout de segurança de rede
 
     print(f"[RESOLVER] Iniciando busca iterativa para '{domain}' ({qtype}) a partir do Root: {current_dns}")
 
@@ -72,9 +74,12 @@ def resolve_iterative(domain, qtype="A"):
         }
         try:
             # TODO: 2. Enviar via UDP para current_dns
+            restante = tempo_restante(prazo)
+            query["tempo_restante"] = restante
+            sock.settimeout(restante)
             sock.sendto(json.dumps(query).encode('utf-8'), (current_dns, SERVER_PORT))
             # TODO: 3. Aguardar a resposta
-            response = aguardar_resposta(sock, query, (current_dns, SERVER_PORT), 5.0)
+            response = aguardar_resposta(sock, query, (current_dns, SERVER_PORT), prazo=prazo)
             status = response.get("status")
             # - Se "SUCCESS": Retornar o registro e armazenar no Cache local com seu respectivo TTL.
             if status == "SUCCESS":
@@ -89,6 +94,7 @@ def resolve_iterative(domain, qtype="A"):
                             registro["ttl"] = 300
                         else:
                             registro["ttl"] = 60
+                    tempo_restante(prazo)
                     save_to_cache(domain, registro)
                     sock.close()
                     return registro
@@ -107,8 +113,8 @@ def resolve_iterative(domain, qtype="A"):
             else:
                 break
         except socket.timeout:
-            print(f"[RESOLVER] Timeout ao consultar o servidor {current_dns}")
-            break
+            sock.close()
+            raise
         except Exception as e:
             print(f"[RESOLVER] Erro durante a resolução: {e}")
             break
@@ -116,8 +122,10 @@ def resolve_iterative(domain, qtype="A"):
     sock.close()
     return None
 
-def resolver_recursivo(domain, qtype="A"):
+def resolver_recursivo(domain, qtype="A", prazo=None):
     # O Root fica responsável por consultar os próximos servidores.
+    if prazo is None:
+        prazo = criar_prazo()
     query = {
         "transaction_id": secrets.randbits(16),
         "qname": domain,
@@ -128,8 +136,11 @@ def resolver_recursivo(domain, qtype="A"):
     print(f"[RESOLVER] Iniciando busca recursiva para '{domain}' ({qtype}) pelo Root: {ROOT_DNS_IP}")
 
     try:
+        restante = tempo_restante(prazo)
+        query["tempo_restante"] = restante
+        sock.settimeout(restante)
         sock.sendto(json.dumps(query).encode('utf-8'), (ROOT_DNS_IP, SERVER_PORT))
-        response = aguardar_resposta(sock, query, (ROOT_DNS_IP, SERVER_PORT), 5.0)
+        response = aguardar_resposta(sock, query, (ROOT_DNS_IP, SERVER_PORT), prazo=prazo)
         if response["status"] == "SUCCESS":
             registro = response["answer"][0].copy()
             if "ttl" not in registro:
@@ -137,6 +148,7 @@ def resolver_recursivo(domain, qtype="A"):
                     registro["ttl"] = 300
                 else:
                     registro["ttl"] = 60
+            tempo_restante(prazo)
             save_to_cache(domain, registro)
             return registro
         elif response["status"] == "NXDOMAIN":
@@ -144,16 +156,22 @@ def resolver_recursivo(domain, qtype="A"):
         else:
             print("[RESOLVER] O Root retornou encaminhamento em uma consulta recursiva.")
     except socket.timeout:
-        print(f"[RESOLVER] Timeout ao consultar o servidor {ROOT_DNS_IP}")
+        raise
     except Exception as e:
         print(f"[RESOLVER] Erro durante a resolução: {e}")
     finally:
         sock.close()
     return None
 
-def resolver_consulta(query):
+def resolver_consulta(query, prazo=None):
     if not consulta_valida(query):
-        print("[RESOLVER] Consulta descartada: ID, domínio ou rd inválido.")
+        print("[RESOLVER] Consulta descartada: ID, domínio, rd ou tempo restante inválido.")
+        return None
+    if prazo is None:
+        prazo = criar_prazo(query)
+    try:
+        tempo_restante(prazo)
+    except socket.timeout:
         return None
     domain = query.get("qname")
     qtype = query.get("qtype", "A")
@@ -170,10 +188,14 @@ def resolver_consulta(query):
     registro = check_cache(domain, qtype)
     if registro is None:
         # 2. Se falhar, faz a busca de rede no modo solicitado
-        if query["rd"]:
-            registro = resolver_recursivo(domain, qtype)
-        else:
-            registro = resolve_iterative(domain, qtype)
+        try:
+            if query["rd"]:
+                registro = resolver_recursivo(domain, qtype, prazo=prazo)
+            else:
+                registro = resolve_iterative(domain, qtype, prazo=prazo)
+        except socket.timeout:
+            print(f"[RESOLVER] Prazo total esgotado para '{domain}' ({qtype}).")
+            return None
     if registro is not None:
         response["status"] = "SUCCESS"
         response["answer"].append(registro)

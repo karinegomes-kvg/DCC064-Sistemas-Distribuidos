@@ -1,25 +1,28 @@
 import json
-import socket
 import time
 from validacao import resposta_valida
+from prazos import TEMPO_TOTAL, tempo_restante
 
 
-def aguardar_resposta(sock, query, servidor, tempo_limite):
-    limite = time.monotonic() + tempo_limite
+def aguardar_resposta(sock, query, servidor, tempo_limite=None, prazo=None):
+    if prazo is None:
+        if tempo_limite is None:
+            tempo_limite = TEMPO_TOTAL
+        prazo = time.monotonic() + tempo_limite
+    elif tempo_limite is not None:
+        prazo = min(prazo, time.monotonic() + tempo_limite)
 
     while True:
-        restante = limite - time.monotonic()
-        if restante <= 0:
-            raise socket.timeout("Tempo limite da consulta esgotado")
-        sock.settimeout(restante)
+        sock.settimeout(tempo_restante(prazo))
         dados, origem = sock.recvfrom(4096)
+        tempo_restante(prazo)
 
         if origem != servidor:
             print(f"[CONSULTA] Resposta de {origem} descartada: servidor diferente de {servidor}.")
             continue
         try:
             resposta = json.loads(dados.decode('utf-8'))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             print(f"[CONSULTA] Resposta inválida de {servidor} descartada.")
             continue
 
@@ -45,4 +48,5 @@ def aguardar_resposta(sock, query, servidor, tempo_limite):
         if not corresponde:
             print(f"[CONSULTA] Resposta de {servidor} descartada: nome ou tipo diferente da consulta.")
             continue
+        tempo_restante(prazo)
         return resposta

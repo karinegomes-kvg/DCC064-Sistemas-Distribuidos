@@ -89,7 +89,7 @@ class TestesLimitesAtendimento(unittest.TestCase):
                     "qtype": "A", "rd": False}
         return json.dumps(consulta).encode("utf-8"), (ip, porta)
 
-    def processar(self, consulta):
+    def processar(self, consulta, prazo=None):
         return {"transaction_id": consulta["transaction_id"], "status": "NXDOMAIN",
                 "answer": [], "authority": []}
 

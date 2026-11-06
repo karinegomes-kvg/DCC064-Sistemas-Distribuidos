@@ -99,6 +99,33 @@ profundamente aninhado são registrados e descartados. O processo continua
 atendendo as próximas consultas, inclusive quando ocorre uma falha no envio
 de uma resposta UDP.
 
+### Prazo total das consultas
+
+Cada consulta tem até 5 segundos no servidor, contados desde o recebimento do
+pacote. A espera na fila e todos os encaminhamentos usam esse mesmo prazo.
+Por exemplo, após 2 segundos na fila, restam 3 segundos para resolver e responder.
+Na resolução iterativa, trocar de servidor não reinicia a contagem.
+
+O campo opcional `tempo_restante` da consulta informa o orçamento em segundos.
+Cada encaminhamento recursivo envia somente o tempo que ainda resta, e o nó
+seguinte desconta a própria fila desse orçamento. O valor precisa ser um número
+finito positivo; valores acima de 5 são limitados a 5. Consultas sem esse campo
+recebem o prazo padrão. Cada nó usa um relógio monotônico local, sem depender da
+sincronização dos relógios entre máquinas.
+
+Consultas vencidas são descartadas antes de iniciar o processamento ou enviar a
+resposta. Uma espera de rede que esgota o prazo não gera `NXDOMAIN`; o cliente
+recebe timeout. O cliente espera até 6 segundos, reservando 1 segundo de margem
+para transporte. Os valores ficam em `prazos.py` (`TEMPO_TOTAL` e `MARGEM_CLIENTE`).
+
+Para carregar as alterações e testar os dois modos com o cache vazio:
+
+```bash
+docker compose up -d --force-recreate --wait
+python3 client_test.py www.ufjf.br
+python3 client_test.py ufjf.br --qtype NS --recursiva
+```
+
 ### Atendimento de consultas simultâneas
 
 O Resolver, Root, TLD e Autoritativo usam a rotina de `atendimento.py`. Cada
@@ -112,8 +139,9 @@ Os limites ficam nas constantes `NUM_TRABALHADORES` e `LIMITE_FILA` de
 `atendimento.py`. O cache do Resolver é protegido por um `Lock`, liberado antes
 das consultas de rede. As consultas são retiradas da fila na ordem de chegada,
 mas as respostas podem terminar em outra ordem; cada uma mantém o ID do cliente.
-Ao encerrar o serviço, as consultas já aceitas são finalizadas antes de fechar
-o socket. Para carregar as alterações, execute `docker compose restart`.
+Ao encerrar o serviço, as consultas já aceitas são processadas ou descartadas
+ao vencer o prazo, antes de fechar o socket. Para carregar as alterações,
+execute `docker compose restart`.
 
 ### Limites de consultas por segundo
 

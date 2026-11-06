@@ -1,4 +1,5 @@
 from ipaddress import AddressValueError, IPv4Address
+import math
 
 
 def id_valido(valor):
@@ -13,6 +14,12 @@ def consulta_valida(consulta):
         return False
     if type(consulta.get("rd")) is not bool:
         return False
+    if "tempo_restante" in consulta:
+        tempo = consulta["tempo_restante"]
+        if type(tempo) not in (int, float) or tempo <= 0:
+            return False
+        if type(tempo) is float and not math.isfinite(tempo):
+            return False
     return True
 
 

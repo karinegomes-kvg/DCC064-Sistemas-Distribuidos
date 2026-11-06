@@ -4,6 +4,7 @@ import os
 import secrets
 from atendimento import atender_consultas
 from comunicacao import aguardar_resposta
+from prazos import criar_prazo, tempo_restante
 from validacao import consulta_valida, registro_valido
 
 # Porta padrão de escuta dos servidores DNS internos
@@ -18,9 +19,10 @@ def load_db(filepath):
         return {}
 
 # TODO 4. Se a requisição for RECURSIVA (rd = True) e o nó intermediário precisar buscar recursiva
-def query_upstream(server_ip, qname, qtype, rd):
+def query_upstream(server_ip, qname, qtype, rd, prazo=None):
+    if prazo is None:
+        prazo = criar_prazo()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(3.0)
     query = {
         "transaction_id": secrets.randbits(16),
         "qname": qname,
@@ -28,17 +30,28 @@ def query_upstream(server_ip, qname, qtype, rd):
         "rd": rd
     }
     try:
+        restante = tempo_restante(prazo)
+        query["tempo_restante"] = restante
+        sock.settimeout(restante)
         sock.sendto(json.dumps(query).encode('utf-8'), (server_ip, PORT))
-        return aguardar_resposta(sock, query, (server_ip, PORT), 3.0)
+        return aguardar_resposta(sock, query, (server_ip, PORT), prazo=prazo)
+    except socket.timeout:
+        raise
     except Exception as e:
         print(f"Erro ao consultar servidor upstream ({server_ip}): {e}")
         return None
     finally:
         sock.close()
 
-def resolver_consulta(query, db):
+def resolver_consulta(query, db, prazo=None):
     if not consulta_valida(query):
-        print("[DNS] Consulta descartada: ID, domínio ou rd inválido.")
+        print("[DNS] Consulta descartada: ID, domínio, rd ou tempo restante inválido.")
+        return None
+    if prazo is None:
+        prazo = criar_prazo(query)
+    try:
+        tempo_restante(prazo)
+    except socket.timeout:
         return None
     tx_id = query.get("transaction_id")
     qname = query.get("qname")
@@ -91,7 +104,11 @@ def resolver_consulta(query, db):
         })
     else:
         # TODO: 4. Se a requisição for RECURSIVA (rd = True), consultar o próximo servidor
-        upstream_resp = query_upstream(record["value"], qname, qtype, rd=True)
+        try:
+            upstream_resp = query_upstream(record["value"], qname, qtype, rd=True, prazo=prazo)
+        except socket.timeout:
+            print(f"[DNS] Prazo total esgotado para '{qname}' ({qtype}).")
+            return None
         if upstream_resp:
             response = upstream_resp
             response["transaction_id"] = tx_id
@@ -104,8 +121,8 @@ def main():
     db_path = os.getenv("DB_PATH", "records.json")
     db = load_db(db_path)
 
-    def processar_consulta(query):
-        return resolver_consulta(query, db)
+    def processar_consulta(query, prazo=None):
+        return resolver_consulta(query, db, prazo=prazo)
 
     # Configura o Socket UDP
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

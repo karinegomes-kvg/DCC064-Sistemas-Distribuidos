@@ -66,7 +66,8 @@ class TestesTransacoes(unittest.TestCase):
     def test_descartes_nao_reiniciam_timeout(self):
         socket_teste = Mock()
         socket_teste.recvfrom.return_value = self.pacote(self.resposta(identificador=2))
-        with patch("comunicacao.time.monotonic", side_effect=[100, 100, 101, 102.5, 103]):
+        with patch("comunicacao.time.monotonic",
+                   side_effect=[100, 100, 100, 101, 101, 102.5, 102.5, 103]):
             with self.assertRaises(socket.timeout):
                 aguardar_resposta(socket_teste, self.consulta, self.servidor, 3.0)
         self.assertEqual(socket_teste.settimeout.call_args_list,
@@ -99,7 +100,7 @@ class TestesTransacoes(unittest.TestCase):
         with patch("socket.socket", return_value=socket_teste), \
                 patch("resolver.secrets.randbits", return_value=1):
             resultado = resolver.resolver_consulta(self.consulta)
-        self.assertEqual(resultado["status"], "NXDOMAIN")
+        self.assertIsNone(resultado)
         self.assertEqual(resolver.cache, {})
         self.assertEqual(socket_teste.sendto.call_count, 1)
         socket_teste.close.assert_called_once()

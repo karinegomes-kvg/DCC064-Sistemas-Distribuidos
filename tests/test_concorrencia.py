@@ -110,7 +110,7 @@ class TestesConcorrencia(unittest.TestCase):
         chamadas = iter(range(5))
         processadas = []
 
-        def processar(consulta):
+        def processar(consulta, prazo=None):
             processadas.append(consulta["transaction_id"])
             if consulta["transaction_id"] == 1:
                 iniciou.set()

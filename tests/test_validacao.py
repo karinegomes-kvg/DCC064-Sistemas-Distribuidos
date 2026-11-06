@@ -188,7 +188,7 @@ class TestesValidacao(unittest.TestCase):
                     resposta, socket_teste = self.consultar_resposta(
                         {"status": "SUCCESS", "answer": [registro]}, tipo
                     )
-                    self.assertEqual(resposta["status"], "NXDOMAIN")
+                    self.assertIsNone(resposta)
                     self.assertEqual(resolver.cache, {})
                     self.assertEqual(socket_teste.sendto.call_count, 1)
                     socket_teste.close.assert_called_once()
@@ -207,7 +207,7 @@ class TestesValidacao(unittest.TestCase):
                 resposta, socket_teste = self.consultar_resposta(
                     {"status": "REFERRAL", "authority": [servidor]}
                 )
-                self.assertEqual(resposta["status"], "NXDOMAIN")
+                self.assertIsNone(resposta)
                 self.assertEqual(socket_teste.sendto.call_count, 1)
                 self.assertEqual(resolver.cache, {})
 
@@ -223,7 +223,7 @@ class TestesValidacao(unittest.TestCase):
                 resposta, _ = self.consultar_resposta(
                     {"status": "SUCCESS", "answer": [registro]}
                 )
-                self.assertEqual(resposta["status"], "NXDOMAIN")
+                self.assertIsNone(resposta)
                 resolver.save_to_cache("teste.br", registro)
                 self.assertEqual(resolver.cache, {})
 
@@ -274,7 +274,7 @@ class TestesValidacao(unittest.TestCase):
                     resultado = dns_server.resolver_consulta(
                         self.consulta(rd=True), {"br": self.registro("NS")}
                     )
-                self.assertEqual(resultado["status"], "NXDOMAIN")
+                self.assertIsNone(resultado)
                 socket_teste.close.assert_called_once()
 
     def test_resposta_exige_listas_e_registros_com_nome(self):

@@ -286,8 +286,7 @@ class TestesTiposConsulta(unittest.TestCase):
         with patch("socket.socket", return_value=socket_teste), \
                 patch("resolver.secrets.randbits", return_value=1234):
             resposta = resolver.resolver_consulta(self.consulta("ufjf.br", "NS"))
-        self.assertEqual(resposta["status"], "NXDOMAIN")
-        self.assertEqual(resposta["answer"], [])
+        self.assertIsNone(resposta)
         self.assertEqual(resolver.cache, {})
         self.assertEqual(socket_teste.sendto.call_count, 1)
 
