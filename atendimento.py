@@ -1,19 +1,31 @@
 import json
+import os
+import time
 from queue import Full, Queue
 from threading import Thread
 from validacao import consulta_valida
+from controle_carga import ControleCarga
 
 
 NUM_TRABALHADORES = 4
 LIMITE_FILA = 8
+LIMITE_POR_IP = 20
+LIMITE_GLOBAL = 100
 
 
 def atender_consultas(sock, processar_consulta, nome_servidor,
-                      trabalhadores=NUM_TRABALHADORES, limite_fila=LIMITE_FILA):
+                      trabalhadores=NUM_TRABALHADORES, limite_fila=LIMITE_FILA,
+                      limite_por_ip=None, limite_global=None):
     if type(trabalhadores) is not int or trabalhadores <= 0:
         raise ValueError("A quantidade de trabalhadores precisa ser um inteiro positivo")
     if type(limite_fila) is not int or limite_fila <= 0:
         raise ValueError("O limite da fila precisa ser um inteiro positivo")
+    if limite_por_ip is None:
+        limite_por_ip = int(os.getenv("LIMITE_POR_IP", str(LIMITE_POR_IP)))
+    if limite_global is None:
+        limite_global = int(os.getenv("LIMITE_GLOBAL", str(LIMITE_GLOBAL)))
+    controle = ControleCarga(limite_por_ip, limite_global)
+    ultimo_aviso = None
     fila = Queue(maxsize=limite_fila)
     equipe = []
 
@@ -42,6 +54,15 @@ def atender_consultas(sock, processar_consulta, nome_servidor,
 
         while True:
             data, addr = sock.recvfrom(4096)
+            # Limita todos os pacotes, inclusive os inválidos, antes de interpretar o JSON.
+            if not controle.aceitar(addr[0]):
+                agora = time.monotonic()
+                if ultimo_aviso is None or agora - ultimo_aviso >= 1.0:
+                    print(f"[{nome_servidor}] Limite de carga: pacote de {addr} descartado; "
+                          f"totais por IP={controle.descartados_por_ip}, "
+                          f"globais={controle.descartados_globais}.")
+                    ultimo_aviso = agora
+                continue
             # Um pacote inválido não deve ocupar a fila nem interromper o atendimento.
             try:
                 query = json.loads(data.decode('utf-8'))
@@ -59,6 +80,9 @@ def atender_consultas(sock, processar_consulta, nome_servidor,
                 continue
             print(f"[{nome_servidor}] Recebeu consulta de {addr}: {query}")
     finally:
+        if controle.descartados_por_ip or controle.descartados_globais:
+            print(f"[{nome_servidor}] Total de descartes por limite: "
+                  f"por IP={controle.descartados_por_ip}, globais={controle.descartados_globais}.")
         # Finaliza os trabalhadores depois das consultas já aceitas.
         for trabalhador in equipe:
             fila.put(None)

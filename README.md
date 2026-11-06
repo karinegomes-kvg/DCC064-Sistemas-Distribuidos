@@ -15,8 +15,10 @@ Antes de iniciar, garanta que a sua máquina possui os seguintes softwares insta
 No terminal, navegue até a pasta do repositório e execute o comando abaixo para construir as imagens e subir a rede de servidores:
 
 ```bash
-docker-compose up --build 
+docker compose up -d --wait
 ```
+
+O parâmetro `--wait` aguarda as portas UDP dos quatro serviços estarem abertas antes de liberar o terminal. A verificação lê `/proc/net/udp` dentro de cada contêiner Linux e não envia consultas nem consome cotas.
 
 Este comando irá subir 4 contêineres na rede 172.20.0.0/16:
 * root_dns (172.20.0.100:5300)
@@ -112,4 +114,94 @@ das consultas de rede. As consultas são retiradas da fila na ordem de chegada,
 mas as respostas podem terminar em outra ordem; cada uma mantém o ID do cliente.
 Ao encerrar o serviço, as consultas já aceitas são finalizadas antes de fechar
 o socket. Para carregar as alterações, execute `docker compose restart`.
+
+### Limites de consultas por segundo
+
+Antes de interpretar o JSON, cada contêiner aplica uma janela móvel de 1 segundo
+com limites por IP e global. Trocar a porta de origem não renova a cota do IP.
+Pacotes excedentes são descartados sem resposta, podendo causar timeout no cliente.
+Pacotes malformados e consultas que depois encontram a fila cheia também consomem
+a cota de entrada. Os avisos de excesso são limitados a um por segundo, com
+contadores acumulados; ao encerrar, é registrado o total de descartes por limite.
+
+Os valores iniciais do Compose são:
+
+| Serviço | Por IP, por segundo | Global, por segundo |
+| --- | ---: | ---: |
+| Resolver | 20 | 100 |
+| Root, TLD e Autoritativo | 100 | 200 |
+
+O limite global vale para cada contêiner. Os servidores internos têm uma cota por
+IP maior porque recebem consultas agregadas do Resolver ou de outro servidor DNS.
+Esses valores são parâmetros iniciais de proteção, ainda não medidos como
+capacidade de atendimento. Nos testes de escala, registre os limites usados para
+distinguir descartes deliberados de saturação do servidor.
+
+Para configurar o Resolver sem editar o código:
+
+```bash
+LIMITE_RESOLVER_POR_IP=40 LIMITE_RESOLVER_GLOBAL=150 docker compose up -d --wait
+```
+
+Para os servidores internos, as variáveis são `LIMITE_DNS_POR_IP` e
+`LIMITE_DNS_GLOBAL`. Todos os valores precisam ser inteiros positivos.
+As variáveis do Compose viram `LIMITE_POR_IP` e `LIMITE_GLOBAL` dentro de cada
+contêiner. Execute `docker compose up -d --wait` para aplicar os novos valores; o Compose
+recria os serviços cuja configuração mudou.
+
+Os controles são acessados somente pela thread de recebimento. O histórico guarda
+apenas admissões do último segundo e nunca supera a cota global; os IPs sem
+admissões recentes são removidos ao receber novos pacotes.
+
+### Verificar os limites no Docker
+
+Os processos usam `python -u` para mostrar os logs imediatamente. Na pasta do
+projeto, configure uma cota pequena para testar com quatro consultas:
+
+```bash
+LIMITE_RESOLVER_POR_IP=2 LIMITE_RESOLVER_GLOBAL=100 docker compose up -d --wait
+python3 client_test.py www.ufjf.br
+sleep 1.1
+```
+
+A primeira consulta deve retornar `SUCCESS` e aquecer o cache. A espera de 1,1
+segundo libera a cota usada por ela. Em outro terminal, acompanhe os avisos:
+
+```bash
+docker compose logs -f --timestamps local_resolver
+```
+
+No primeiro terminal, inicie quatro clientes juntos:
+
+```bash
+for i in 1 2 3 4; do
+    python3 client_test.py www.ufjf.br &
+done
+wait
+```
+
+Com o ambiente ocioso e as quatro consultas chegando dentro de um segundo,
+espere duas respostas e dois timeouts, com um aviso de limite por IP no log.
+Os avisos são agrupados; não há um aviso por pacote descartado. Após o grupo
+terminar, uma consulta normal deve responder novamente.
+
+Para isolar o limite global, configure uma cota por IP maior que a global e
+repita o aquecimento, a espera e o grupo de clientes:
+
+```bash
+LIMITE_RESOLVER_POR_IP=10 LIMITE_RESOLVER_GLOBAL=2 docker compose up -d --wait
+```
+
+Nesse caso, o aviso deve registrar descartes globais. Para voltar aos valores
+padrão do Resolver:
+
+```bash
+LIMITE_RESOLVER_POR_IP=20 LIMITE_RESOLVER_GLOBAL=100 docker compose up -d --wait
+```
+
+Para rodar os testes automáticos dos limites, sem depender dos contêineres:
+
+```bash
+python3 -B -m unittest discover -s tests -p 'test_controle_carga.py' -v
+```
 

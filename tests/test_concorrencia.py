@@ -12,6 +12,9 @@ from validacao import registro_valido
 
 class TestesConcorrencia(unittest.TestCase):
     def setUp(self):
+        ambiente = patch.dict("os.environ", {"LIMITE_POR_IP": "20", "LIMITE_GLOBAL": "100"})
+        ambiente.start()
+        self.addCleanup(ambiente.stop)
         resolver.cache.clear()
         self.addCleanup(resolver.cache.clear)
         substituicao_print = patch("builtins.print")
