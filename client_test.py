@@ -1,23 +1,24 @@
 import socket
 import json
 import time
+import argparse
 
 # O Local Resolver está exposto na porta 5354 do host
 RESOLVER_IP = "127.0.0.1"
 RESOLVER_PORT = 5354
 
-def enviar_consulta(dominio):
+def enviar_consulta(dominio, qtype="A"):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(3.0)
     
     query = {
         "transaction_id": 1234,
         "qname": dominio,
-        "qtype": "A",
+        "qtype": qtype,
         "rd": False  # Consulta iterativa
     }
     
-    print(f"\n---> Enviando consulta para '{dominio}'...")
+    print(f"\n---> Enviando consulta {qtype} para '{dominio}'...")
     try:
         sock.sendto(json.dumps(query).encode('utf-8'), (RESOLVER_IP, RESOLVER_PORT))
         data, _ = sock.recvfrom(4096)
@@ -30,7 +31,7 @@ def enviar_consulta(dominio):
     finally:
         sock.close()
 
-if __name__ == "__main__":
+def executar_testes():
     print("=== BATERIA DE TESTES - MINI-DNS DISTRIBUÍDO ===")
 
     # Teste 1: Primeira busca (deve fazer a resolução iterativa completa)
@@ -53,7 +54,29 @@ if __name__ == "__main__":
     print("\n[TESTE 4 - Continuação] Consulta por 'www.ufjf.br' pós-TTL (Invalidação e Nova Busca)")
     enviar_consulta("www.ufjf.br")
 
+    print("\n[TESTE 5] Servidor responsável pela zona 'br' (NS)")
+    enviar_consulta("br", "NS")
+
+    print("\n[TESTE 6] Servidor responsável pela zona 'ufjf.br' (NS)")
+    enviar_consulta("ufjf.br", "NS")
+
+    print("\n[TESTE 7] Segunda consulta NS para 'ufjf.br' (Cache Hit)")
+    enviar_consulta("ufjf.br", "NS")
+
+    print("\n[TESTE 8] Consulta NS para nome que só possui registro A")
+    enviar_consulta("www.ufjf.br", "NS")
+
     print("\n=== BATERIA DE TESTES CONCLUÍDA ===")
+
+if __name__ == "__main__":
+    opcoes = argparse.ArgumentParser(description="Cliente Mini-DNS para consultas A e NS")
+    opcoes.add_argument("dominio", nargs="?", help="Domínio a consultar; sem ele, executa a bateria de testes")
+    opcoes.add_argument("--qtype", choices=("A", "NS"), default="A")
+    argumentos = opcoes.parse_args()
+    if argumentos.dominio:
+        enviar_consulta(argumentos.dominio, argumentos.qtype)
+    else:
+        executar_testes()
 
 # 1. Primeira Consulta: www.ufjf.br (Busca na Rede)
 # Cliente: Recebe status: "SUCCESS" e IP "172.20.0.40".

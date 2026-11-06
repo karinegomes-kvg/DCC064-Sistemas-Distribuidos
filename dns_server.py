@@ -1,7 +1,6 @@
 import socket
 import json
 import os
-import sys
 
 # Porta padrão de escuta dos servidores DNS internos
 PORT = 5300
@@ -34,6 +33,62 @@ def query_upstream(server_ip, qname, qtype, rd):
     finally:
         sock.close()
 
+def resolver_consulta(query, db):
+    tx_id = query.get("transaction_id")
+    qname = query.get("qname")
+    qtype = query.get("qtype", "A")
+    recursion_desired = query.get("rd", False)
+    response = {
+        "transaction_id": tx_id,
+        "status": "NXDOMAIN",
+        "answer": [],
+        "authority": []
+    }
+
+    if not isinstance(qname, str) or qtype not in ("A", "NS"):
+        return response
+
+    # TODO: 1. Verificar se o domínio exato ou sufixo correspondente está no DB local
+    record = db.get(qname)
+    if record and record["type"] == qtype:
+        # TODO: 2. Preencher a "answer" e retornar "SUCCESS" para o nome e tipo solicitados
+        response["status"] = "SUCCESS"
+        response["answer"].append({
+            "name": qname,
+            "type": qtype,
+            "value": record["value"],
+            "ttl": record.get("ttl", 300 if qtype == "NS" else 60)
+        })
+        return response
+
+    # Procura o sufixo mais específico que indica outro servidor.
+    matched_key = None
+    for key in db:
+        if db[key]["type"] == "NS" and (qname == key or qname.endswith("." + key)):
+            if matched_key is None or len(key) > len(matched_key):
+                matched_key = key
+    if matched_key is None:
+        return response
+
+    record = db[matched_key]
+    # TODO: 3. Se a requisição for ITERATIVA (rd = False), preencher "authority"
+    if not recursion_desired:
+        response["status"] = "REFERRAL"
+        response["authority"].append({
+            "name": matched_key,
+            "type": "NS",
+            "value": record["value"],
+            "ttl": record.get("ttl", 300)
+        })
+    else:
+        # TODO: 4. Se a requisição for RECURSIVA (rd = True), consultar o próximo servidor
+        upstream_resp = query_upstream(record["value"], qname, qtype, rd=True)
+        if upstream_resp:
+            response = upstream_resp
+            response["transaction_id"] = tx_id
+
+    return response
+
 def main():
     # Carrega o papel e banco de dados via variáveis de ambiente
     role = os.getenv("DNS_ROLE", "ROOT") # ROOT, TLD ou AUTH
@@ -50,56 +105,7 @@ def main():
         try:
             query = json.loads(data.decode('utf-8'))
             print(f"[{role}] Recebeu consulta de {addr}: {query}")
-            tx_id = query.get("transaction_id")
-            qname = query.get("qname")
-            qtype = query.get("qtype")
-            recursion_desired = query.get("rd", False)
-
-            response = {
-            "transaction_id": tx_id,
-            "status": "NXDOMAIN",
-            "answer": [],
-            "authority": []
-            }
-            # TODO: 1. Verificar se o domínio exato ou sufixo correspondente está no DB local
-            matched_key = None
-            if qname in db:
-                matched_key = qname
-            else:
-                for key in db.keys():
-                    if qname.endswith("." + key) or qname == key:
-                        matched_key = key
-                        break
-            if matched_key:
-                record = db[matched_key]
-
-                # TODO: 2. Se estiver e for o servidor Autorizativo final, preencher a "answer" e retornar "SUCCESS"
-                if record["type"] == "A":
-                    response["status"] = "SUCCESS"
-                    response["answer"].append({
-                        "name": qname,
-                        "type": record["type"],
-                        "value": record["value"],
-                        "ttl": record.get("ttl", 60)
-                    })
-
-                # TODO: 3. Se for ROOT ou TLD e a requisição for ITERATIVA (rd = False), preencher "authority" com
-                elif record["type"] == "NS":
-                    if not recursion_desired:
-                        response["status"] = "REFERRAL"
-                        response["authority"].append({
-                            "name": matched_key,
-                            "type": "NS",
-                            "value": record["value"],
-                            "ttl": record.get("ttl", 300)
-                        })
-
-                    # TODO: 4. Se a requisição for RECURSIVA (rd = True) e o nó intermediário precisar buscar recursiva
-                    else:
-                        upstream_resp = query_upstream(record["value"], qname, qtype, rd=True)
-                        if upstream_resp:
-                            response = upstream_resp
-                            response["transaction_id"] = tx_id
+            response = resolver_consulta(query, db)
         
             # Envia a resposta JSON de volta ao solicitante
             sock.sendto(json.dumps(response).encode('utf-8'), addr)

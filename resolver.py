@@ -9,33 +9,36 @@ ROOT_DNS_IP = os.getenv("ROOT_DNS_IP", "172.20.0.100") # closure mechanism
 SERVER_PORT = 5300
 
 # Cache local em memória
-# Estrutura esperada: { "dominio": { "ip": "...", "expires_at": 1786812345, "type": "A" } }
+# Estrutura: { ("dominio", "tipo"): { "registro": {...}, "expires_at": 1786812345 } }
 cache = {}
 
-def check_cache(domain):
+def check_cache(domain, qtype="A"):
     now = time.time()
-    if domain in cache:
-        record = cache[domain]
+    chave = (domain, qtype)
+    if chave in cache:
+        registro_cache = cache[chave]
         # TODO: Verificar se o registro ainda está válido comparando now com expires_at
-        if now < record["expires_at"]:
-            print(f"[CACHE HIT] {domain} -> {record['ip']}")
-            return record["ip"]
+        if now < registro_cache["expires_at"]:
+            registro = registro_cache["registro"].copy()
+            registro["ttl"] = int(registro_cache["expires_at"] - now)
+            print(f"[CACHE HIT] {domain} ({qtype}) -> {registro['value']}")
+            return registro
         else:
-            print(f"[CACHE EXPIRED] Registro expirado para {domain}")
-            del cache[domain]
+            print(f"[CACHE EXPIRED] Registro expirado para {domain} ({qtype})")
+            del cache[chave]
     return None
 
-def save_to_cache(domain, ip, ttl):
+def save_to_cache(domain, registro):
     # TODO: Implementar lógica de salvar no cache calculando o expires_at (time.time() + ttl)
+    ttl = registro["ttl"]
     expires_at = time.time() + ttl
-    cache[domain] = {
-        "ip": ip,
-        "expires_at": expires_at,
-        "ttl": ttl
+    cache[(domain, registro["type"])] = {
+        "registro": registro.copy(),
+        "expires_at": expires_at
     }
-    print(f"[CACHE SAVE] Registrado {domain} -> {ip} por {ttl} segundos.")
+    print(f"[CACHE SAVE] Registrado {domain} ({registro['type']}) -> {registro['value']} por {ttl} segundos.")
 
-def resolve_iterative(domain):
+def resolve_iterative(domain, qtype="A"):
     # Algoritmo de Resolução Iterativa clássico
     current_dns = ROOT_DNS_IP
     tx_id = 1001
@@ -43,14 +46,14 @@ def resolve_iterative(domain):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(5.0) # Timeout de segurança de rede
 
-    print(f"[RESOLVER] Iniciando busca iterativa para '{domain}' a partir do Root: {current_dns}")
+    print(f"[RESOLVER] Iniciando busca iterativa para '{domain}' ({qtype}) a partir do Root: {current_dns}")
 
     while True:
         # TODO: 1. Montar a mensagem Query JSON com rd=False (iterativa)
         query = {
             "transaction_id": tx_id,
             "qname": domain,
-            "qtype": "A",
+            "qtype": qtype,
             "rd": False
         }
         try:
@@ -60,27 +63,35 @@ def resolve_iterative(domain):
             data, _ = sock.recvfrom(4096)
             response = json.loads(data.decode('utf-8'))
             status = response.get("status")
-            # TODO: 4. Analisar o status retornado:
-            # - Se "SUCCESS": Retornar o IP final e armazenar no Cache local com seu respectivo TTL.
+            # - Se "SUCCESS": Retornar o registro e armazenar no Cache local com seu respectivo TTL.
             if status == "SUCCESS":
-                if response.get("answer"):
-                    ans = response["answer"][0]
-                    ip = ans["value"]
-                    ttl = ans.get("ttl", 60)
-                    save_to_cache(domain, ip, ttl)
+                registro = None
+                for resposta in response.get("answer", []):
+                    if resposta.get("name") == domain and resposta.get("type") == qtype:
+                        registro = resposta.copy()
+                        break
+                if registro:
+                    if "ttl" not in registro:
+                        if qtype == "NS":
+                            registro["ttl"] = 300
+                        else:
+                            registro["ttl"] = 60
+                    save_to_cache(domain, registro)
                     sock.close()
-                    return ip
-            # - Se "REFERRAL": Ler o IP do próximo servidor indicado no campo "authority" e atualizar curr
+                    return registro
+                break
+            # - Se "REFERRAL": Ler o IP indicado em "authority" e atualizar current_dns.
             elif status == "REFERRAL":
-                if response.get("authority"):
-                    auth = response["authority"][0]
-                    current_dns = auth["value"]
-                    print(f"[RESOLVER] Indicado para o próximo servidor (Referral): {current_dns}")
-                else:
+                servidores = response.get("authority")
+                if not servidores:
                     break
+                current_dns = servidores[0]["value"]
+                print(f"[RESOLVER] Indicado para o próximo servidor (Referral): {current_dns}")
             # - Se "NXDOMAIN": Encerrar a busca, domínio inexistente.
             elif status == "NXDOMAIN":
                 print(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
+                break
+            else:
                 break
         except socket.timeout:
             print(f"[RESOLVER] Timeout ao consultar o servidor {current_dns}")
@@ -92,6 +103,28 @@ def resolve_iterative(domain):
     sock.close()
     return None
 
+def resolver_consulta(query):
+    domain = query.get("qname")
+    qtype = query.get("qtype", "A")
+    response = {
+        "transaction_id": query.get("transaction_id"),
+        "status": "NXDOMAIN",
+        "answer": [],
+        "authority": []
+    }
+    if not isinstance(domain, str) or qtype not in ("A", "NS"):
+        return response
+
+    # 1. Tenta buscar do cache local primeiro
+    registro = check_cache(domain, qtype)
+    if registro is None:
+        # 2. Se falhar, dispara a resolução iterativa de rede
+        registro = resolve_iterative(domain, qtype)
+    if registro is not None:
+        response["status"] = "SUCCESS"
+        response["answer"].append(registro)
+    return response
+
 def main():
     # Inicializa o socket para ouvir requisições dos clientes (ex: browser ou CLI)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -102,22 +135,7 @@ def main():
     while True:
         data, addr = sock.recvfrom(4096)
         query = json.loads(data.decode('utf-8'))
-        domain = query.get("qname")
-
-        # 1. Tenta buscar do cache local primeiro
-        cached_ip = check_cache(domain)
-        if cached_ip:
-            response = {"status": "SUCCESS", "answer": [{"name": domain, "value": cached_ip}]}
-            sock.sendto(json.dumps(response).encode('utf-8'), addr)
-            continue
-
-        # 2. Se falhar, dispara a resolução iterativa de rede
-        ip_resolvido = resolve_iterative(domain)
-        if ip_resolvido:
-            response = {"status": "SUCCESS", "answer": [{"name": domain, "value": ip_resolvido}]}
-        else:
-            response = {"status": "NXDOMAIN", "answer": []}
-
+        response = resolver_consulta(query)
         sock.sendto(json.dumps(response).encode('utf-8'), addr)
 
 if __name__ == "__main__":

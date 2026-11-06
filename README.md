@@ -30,3 +30,31 @@ Abra um novo terminal e execute:
 ```bash
 python client_test.py
 ```
+
+### Consultas A e NS
+
+O campo `qtype` seleciona o registro solicitado:
+
+* `A`: endereço IP do nome exato, por exemplo `www.ufjf.br`.
+* `NS`: servidor responsável pela zona exata, por exemplo `br` ou `ufjf.br`.
+  Neste Mini-DNS, o campo `value` do registro NS contém o IP desse servidor.
+
+Para executar consultas individuais:
+
+```bash
+python3 client_test.py www.ufjf.br --qtype A
+python3 client_test.py br --qtype NS
+python3 client_test.py ufjf.br --qtype NS
+```
+
+Uma consulta NS para `ufjf.br` recebe o encaminhamento do Root para o TLD;
+o TLD responde com `SUCCESS` e o registro NS em `answer`. Os encaminhamentos
+intermediários continuam usando `REFERRAL` e `authority` para ambos os tipos.
+Respostas de sucesso incluem `name`, `type`, `value` e `ttl` em cada registro.
+O cache diferencia `(qname, qtype)` e informa o TTL restante nas respostas.
+
+O protocolo simplificado usa `NXDOMAIN` quando não há registro do tipo pedido;
+assim, consultar NS para `www.ufjf.br`, que só possui A na base atual, retorna
+`NXDOMAIN`. Somente `A` e `NS` são aceitos; outros tipos também retornam
+`NXDOMAIN`, sem consulta à rede nem gravação no cache.
+
