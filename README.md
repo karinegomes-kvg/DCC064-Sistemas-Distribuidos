@@ -65,3 +65,11 @@ do trabalho. IPv6, nomes de servidores e endereços inválidos são recusados ne
 campos. O TTL, quando informado, precisa ser um inteiro maior ou igual a zero;
 se estiver ausente, são usados 60 segundos para `A` e 300 para `NS`.
 
+Cada consulta enviada pelo cliente, Resolver ou servidor recursivo recebe um
+`transaction_id` aleatório entre 0 e 65535. Só são aceitas respostas com o mesmo
+ID e vindas do IP e da porta consultados. O nome e o tipo da resposta também
+são conferidos; encaminhamentos precisam indicar uma zona correspondente ao
+domínio consultado. Pacotes incorretos são descartados sem reiniciar o timeout.
+Ao responder ao cliente, o ID original dele é mantido, inclusive nas respostas
+do cache e após encaminhamentos recursivos. Consultas com ID inválido são descartadas.
+

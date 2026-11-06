@@ -1,6 +1,10 @@
 from ipaddress import AddressValueError, IPv4Address
 
 
+def id_valido(valor):
+    return type(valor) is int and 0 <= valor <= 65535
+
+
 def registro_valido(registro):
     if not isinstance(registro, dict):
         return False
@@ -33,6 +37,8 @@ def registro_valido(registro):
 
 def resposta_valida(resposta):
     if not isinstance(resposta, dict):
+        return False
+    if not id_valido(resposta.get("transaction_id")):
         return False
     status = resposta.get("status")
     if status not in ("SUCCESS", "REFERRAL", "NXDOMAIN"):

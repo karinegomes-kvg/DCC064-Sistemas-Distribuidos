@@ -1,7 +1,9 @@
 import socket
 import json
 import os
-from validacao import registro_valido, resposta_valida
+import secrets
+from comunicacao import aguardar_resposta
+from validacao import id_valido, registro_valido
 
 # Porta padrão de escuta dos servidores DNS internos
 PORT = 5300
@@ -19,24 +21,14 @@ def query_upstream(server_ip, qname, qtype, rd):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(3.0)
     query = {
-        "transaction_id": 9999,
+        "transaction_id": secrets.randbits(16),
         "qname": qname,
         "qtype": qtype,
         "rd": rd
     }
     try:
         sock.sendto(json.dumps(query).encode('utf-8'), (server_ip, PORT))
-        data, _ = sock.recvfrom(4096)
-        resposta = json.loads(data.decode('utf-8'))
-        if not resposta_valida(resposta):
-            print(f"Resposta inválida do servidor {server_ip}")
-            return None
-        if resposta["status"] == "SUCCESS":
-            for registro in resposta["answer"]:
-                if registro["name"] != qname or registro["type"] != qtype:
-                    print(f"Resposta não corresponde à consulta enviada para {server_ip}")
-                    return None
-        return resposta
+        return aguardar_resposta(sock, query, (server_ip, PORT), 3.0)
     except Exception as e:
         print(f"Erro ao consultar servidor upstream ({server_ip}): {e}")
         return None
@@ -44,6 +36,9 @@ def query_upstream(server_ip, qname, qtype, rd):
         sock.close()
 
 def resolver_consulta(query, db):
+    if not isinstance(query, dict) or not id_valido(query.get("transaction_id")):
+        print("[DNS] Consulta descartada: ID inválido.")
+        return None
     tx_id = query.get("transaction_id")
     qname = query.get("qname")
     qtype = query.get("qtype", "A")
@@ -119,6 +114,8 @@ def main():
             query = json.loads(data.decode('utf-8'))
             print(f"[{role}] Recebeu consulta de {addr}: {query}")
             response = resolver_consulta(query, db)
+            if response is None:
+                continue
         
             # Envia a resposta JSON de volta ao solicitante
             sock.sendto(json.dumps(response).encode('utf-8'), addr)

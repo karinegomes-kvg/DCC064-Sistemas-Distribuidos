@@ -1,4 +1,5 @@
 import json
+import socket
 import unittest
 from unittest.mock import Mock, patch
 
@@ -23,9 +24,17 @@ class TestesValidacao(unittest.TestCase):
 
     def consultar_resposta(self, resposta, tipo="A"):
         socket_teste = Mock()
-        socket_teste.recvfrom.return_value = (
-            json.dumps(resposta).encode("utf-8"), (resolver.ROOT_DNS_IP, 5300)
-        )
+
+        def enviar(dados, endereco):
+            consulta = json.loads(dados.decode("utf-8"))
+            resposta_enviada = resposta.copy()
+            resposta_enviada["transaction_id"] = consulta["transaction_id"]
+            socket_teste.recvfrom.side_effect = [
+                (json.dumps(resposta_enviada).encode("utf-8"), endereco),
+                socket.timeout,
+            ]
+
+        socket_teste.sendto.side_effect = enviar
         with patch("socket.socket", return_value=socket_teste):
             resultado = resolver.resolver_consulta(self.consulta(tipo))
         return resultado, socket_teste
@@ -153,11 +162,13 @@ class TestesValidacao(unittest.TestCase):
         for registro in registros:
             with self.subTest(registro=registro):
                 socket_teste = Mock()
-                resposta = {"status": "SUCCESS", "answer": [registro]}
-                socket_teste.recvfrom.return_value = (
-                    json.dumps(resposta).encode("utf-8"), ("192.0.2.1", 5300)
-                )
-                with patch("socket.socket", return_value=socket_teste):
+                resposta = {"transaction_id": 1234, "status": "SUCCESS", "answer": [registro]}
+                socket_teste.recvfrom.side_effect = [
+                    (json.dumps(resposta).encode("utf-8"), ("192.0.2.1", 5300)),
+                    socket.timeout,
+                ]
+                with patch("socket.socket", return_value=socket_teste), \
+                        patch("dns_server.secrets.randbits", return_value=1234):
                     resultado = dns_server.resolver_consulta(
                         self.consulta(rd=True), {"br": self.registro("NS")}
                     )
@@ -175,6 +186,8 @@ class TestesValidacao(unittest.TestCase):
         )
         for resposta in respostas:
             with self.subTest(resposta=resposta):
+                if isinstance(resposta, dict):
+                    resposta["transaction_id"] = 1234
                 self.assertFalse(resposta_valida(resposta))
 
 

@@ -1,4 +1,5 @@
 import json
+import socket
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -77,6 +78,17 @@ class TestesTiposConsulta(unittest.TestCase):
         self.assertEqual([ip for ip, _ in self.rede.enviadas],
                          [self.rede.raiz, self.rede.tld, self.rede.autoritativo])
 
+    def test_cada_etapa_gera_id_e_resposta_mantem_id_do_cliente(self):
+        with patch("resolver.secrets.randbits", side_effect=[0, 32768, 65535]) as gerar_id:
+            resposta = resolver.resolver_consulta(self.consulta("www.ufjf.br", "A"))
+        self.assertEqual([consulta["transaction_id"] for _, consulta in self.rede.enviadas],
+                         [0, 32768, 65535])
+        self.assertEqual(gerar_id.call_count, 3)
+        for chamada in gerar_id.call_args_list:
+            self.assertEqual(chamada.args, (16,))
+        self.assertEqual(resposta["status"], "SUCCESS")
+        self.assertEqual(resposta["transaction_id"], 45182)
+
     def test_consulta_ns_para_no_servidor_com_o_registro(self):
         for dominio, valor, servidores in (
             ("br", self.rede.tld, [self.rede.raiz]),
@@ -114,6 +126,30 @@ class TestesTiposConsulta(unittest.TestCase):
                 self.assertTrue(self.rede.enviadas)
                 self.assertTrue(all(consulta["qtype"] == qtype and consulta["rd"]
                                     for _, consulta in self.rede.enviadas))
+
+    def test_recursao_gera_ids_e_restaura_id_da_consulta_original(self):
+        with patch("dns_server.secrets.randbits", side_effect=[25, 65535]) as gerar_id:
+            resposta = dns_server.resolver_consulta(
+                self.consulta("www.ufjf.br", "A", rd=True),
+                self.rede.bases[self.rede.raiz],
+            )
+        self.assertEqual([consulta["transaction_id"] for _, consulta in self.rede.enviadas],
+                         [25, 65535])
+        self.assertEqual(gerar_id.call_count, 2)
+        self.assertEqual(resposta["status"], "SUCCESS")
+        self.assertEqual(resposta["transaction_id"], 45182)
+
+    def test_consultas_com_id_invalido_sao_descartadas(self):
+        for identificador in (None, True, False, -1, 65536, 1.5, "1234"):
+            with self.subTest(identificador=identificador):
+                consulta = self.consulta("www.ufjf.br", "A")
+                consulta["transaction_id"] = identificador
+                self.assertIsNone(resolver.resolver_consulta(consulta))
+                self.assertIsNone(dns_server.resolver_consulta(
+                    consulta, self.rede.bases[self.rede.raiz]
+                ))
+        self.assertEqual(self.rede.enviadas, [])
+        self.assertEqual(resolver.cache, {})
 
     def test_consulta_ns_nao_usa_registro_a_do_cache(self):
         resolver.resolver_consulta(self.consulta("www.ufjf.br", "A"))
@@ -166,12 +202,17 @@ class TestesTiposConsulta(unittest.TestCase):
 
     def test_resolver_recusa_resposta_com_tipo_incorreto(self):
         resposta_incorreta = {
+            "transaction_id": 1234,
             "status": "SUCCESS",
             "answer": [{"name": "ufjf.br", "type": "A", "value": "192.0.2.1", "ttl": 30}],
         }
         socket_teste = Mock()
-        socket_teste.recvfrom.return_value = (json.dumps(resposta_incorreta).encode(), (self.rede.raiz, 5300))
-        with patch("socket.socket", return_value=socket_teste):
+        socket_teste.recvfrom.side_effect = [
+            (json.dumps(resposta_incorreta).encode(), (self.rede.raiz, 5300)),
+            socket.timeout,
+        ]
+        with patch("socket.socket", return_value=socket_teste), \
+                patch("resolver.secrets.randbits", return_value=1234):
             resposta = resolver.resolver_consulta(self.consulta("ufjf.br", "NS"))
         self.assertEqual(resposta["status"], "NXDOMAIN")
         self.assertEqual(resposta["answer"], [])

@@ -2,7 +2,9 @@ import socket
 import json
 import time
 import os
-from validacao import registro_valido, resposta_valida
+import secrets
+from comunicacao import aguardar_resposta
+from validacao import id_valido, registro_valido
 
 # Configurações do Resolver Local
 RESOLVER_PORT = 5353
@@ -45,7 +47,6 @@ def save_to_cache(domain, registro):
 def resolve_iterative(domain, qtype="A"):
     # Algoritmo de Resolução Iterativa clássico
     current_dns = ROOT_DNS_IP
-    tx_id = 1001
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(5.0) # Timeout de segurança de rede
@@ -54,6 +55,7 @@ def resolve_iterative(domain, qtype="A"):
 
     while True:
         # TODO: 1. Montar a mensagem Query JSON com rd=False (iterativa)
+        tx_id = secrets.randbits(16)
         query = {
             "transaction_id": tx_id,
             "qname": domain,
@@ -64,11 +66,7 @@ def resolve_iterative(domain, qtype="A"):
             # TODO: 2. Enviar via UDP para current_dns
             sock.sendto(json.dumps(query).encode('utf-8'), (current_dns, SERVER_PORT))
             # TODO: 3. Aguardar a resposta
-            data, _ = sock.recvfrom(4096)
-            response = json.loads(data.decode('utf-8'))
-            if not resposta_valida(response):
-                print(f"[RESOLVER] Resposta inválida do servidor {current_dns}")
-                break
+            response = aguardar_resposta(sock, query, (current_dns, SERVER_PORT), 5.0)
             status = response.get("status")
             # - Se "SUCCESS": Retornar o registro e armazenar no Cache local com seu respectivo TTL.
             if status == "SUCCESS":
@@ -111,6 +109,9 @@ def resolve_iterative(domain, qtype="A"):
     return None
 
 def resolver_consulta(query):
+    if not isinstance(query, dict) or not id_valido(query.get("transaction_id")):
+        print("[RESOLVER] Consulta descartada: ID inválido.")
+        return None
     domain = query.get("qname")
     qtype = query.get("qtype", "A")
     response = {
@@ -143,6 +144,8 @@ def main():
         data, addr = sock.recvfrom(4096)
         query = json.loads(data.decode('utf-8'))
         response = resolver_consulta(query)
+        if response is None:
+            continue
         sock.sendto(json.dumps(response).encode('utf-8'), addr)
 
 if __name__ == "__main__":

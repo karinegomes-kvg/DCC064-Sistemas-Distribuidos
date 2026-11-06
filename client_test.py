@@ -2,6 +2,8 @@ import socket
 import json
 import time
 import argparse
+import secrets
+from comunicacao import aguardar_resposta
 
 # O Local Resolver está exposto na porta 5354 do host
 RESOLVER_IP = "127.0.0.1"
@@ -12,7 +14,7 @@ def enviar_consulta(dominio, qtype="A"):
     sock.settimeout(3.0)
     
     query = {
-        "transaction_id": 1234,
+        "transaction_id": secrets.randbits(16),
         "qname": dominio,
         "qtype": qtype,
         "rd": False  # Consulta iterativa
@@ -21,8 +23,7 @@ def enviar_consulta(dominio, qtype="A"):
     print(f"\n---> Enviando consulta {qtype} para '{dominio}'...")
     try:
         sock.sendto(json.dumps(query).encode('utf-8'), (RESOLVER_IP, RESOLVER_PORT))
-        data, _ = sock.recvfrom(4096)
-        resposta = json.loads(data.decode('utf-8'))
+        resposta = aguardar_resposta(sock, query, (RESOLVER_IP, RESOLVER_PORT), 3.0)
         print(f"<--- Resposta recebida:\n{json.dumps(resposta, indent=2)}")
     except socket.timeout:
         print("<--- Timeout: Sem resposta do Local Resolver.")
