@@ -58,3 +58,10 @@ assim, consultar NS para `www.ufjf.br`, que só possui A na base atual, retorna
 `NXDOMAIN`. Somente `A` e `NS` são aceitos; outros tipos também retornam
 `NXDOMAIN`, sem consulta à rede nem gravação no cache.
 
+Os valores dos registros são validados antes de responder, encaminhar ou salvar
+no cache. Registros `A` precisam conter um IPv4 em texto, como `172.20.0.40`.
+Neste Mini-DNS, `NS` também usa um IPv4 em `value`, conforme o formato simplificado
+do trabalho. IPv6, nomes de servidores e endereços inválidos são recusados nesses
+campos. O TTL, quando informado, precisa ser um inteiro maior ou igual a zero;
+se estiver ausente, são usados 60 segundos para `A` e 300 para `NS`.
+

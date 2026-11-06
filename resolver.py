@@ -2,6 +2,7 @@ import socket
 import json
 import time
 import os
+from validacao import registro_valido, resposta_valida
 
 # Configurações do Resolver Local
 RESOLVER_PORT = 5353
@@ -30,6 +31,9 @@ def check_cache(domain, qtype="A"):
 
 def save_to_cache(domain, registro):
     # TODO: Implementar lógica de salvar no cache calculando o expires_at (time.time() + ttl)
+    if not registro_valido(registro) or "ttl" not in registro:
+        print(f"[CACHE] Registro inválido para {domain}, não foi armazenado.")
+        return
     ttl = registro["ttl"]
     expires_at = time.time() + ttl
     cache[(domain, registro["type"])] = {
@@ -62,6 +66,9 @@ def resolve_iterative(domain, qtype="A"):
             # TODO: 3. Aguardar a resposta
             data, _ = sock.recvfrom(4096)
             response = json.loads(data.decode('utf-8'))
+            if not resposta_valida(response):
+                print(f"[RESOLVER] Resposta inválida do servidor {current_dns}")
+                break
             status = response.get("status")
             # - Se "SUCCESS": Retornar o registro e armazenar no Cache local com seu respectivo TTL.
             if status == "SUCCESS":

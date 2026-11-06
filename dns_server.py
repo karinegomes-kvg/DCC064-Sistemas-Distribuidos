@@ -1,6 +1,7 @@
 import socket
 import json
 import os
+from validacao import registro_valido, resposta_valida
 
 # Porta padrão de escuta dos servidores DNS internos
 PORT = 5300
@@ -26,7 +27,16 @@ def query_upstream(server_ip, qname, qtype, rd):
     try:
         sock.sendto(json.dumps(query).encode('utf-8'), (server_ip, PORT))
         data, _ = sock.recvfrom(4096)
-        return json.loads(data.decode('utf-8'))
+        resposta = json.loads(data.decode('utf-8'))
+        if not resposta_valida(resposta):
+            print(f"Resposta inválida do servidor {server_ip}")
+            return None
+        if resposta["status"] == "SUCCESS":
+            for registro in resposta["answer"]:
+                if registro["name"] != qname or registro["type"] != qtype:
+                    print(f"Resposta não corresponde à consulta enviada para {server_ip}")
+                    return None
+        return resposta
     except Exception as e:
         print(f"Erro ao consultar servidor upstream ({server_ip}): {e}")
         return None
@@ -50,7 +60,7 @@ def resolver_consulta(query, db):
 
     # TODO: 1. Verificar se o domínio exato ou sufixo correspondente está no DB local
     record = db.get(qname)
-    if record and record["type"] == qtype:
+    if registro_valido(record) and record["type"] == qtype:
         # TODO: 2. Preencher a "answer" e retornar "SUCCESS" para o nome e tipo solicitados
         response["status"] = "SUCCESS"
         response["answer"].append({
@@ -64,7 +74,10 @@ def resolver_consulta(query, db):
     # Procura o sufixo mais específico que indica outro servidor.
     matched_key = None
     for key in db:
-        if db[key]["type"] == "NS" and (qname == key or qname.endswith("." + key)):
+        record = db[key]
+        if not registro_valido(record) or record["type"] != "NS":
+            continue
+        if qname == key or qname.endswith("." + key):
             if matched_key is None or len(key) > len(matched_key):
                 matched_key = key
     if matched_key is None:
