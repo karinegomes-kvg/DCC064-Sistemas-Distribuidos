@@ -3,6 +3,8 @@ import json
 import time
 import os
 import secrets
+from threading import Lock
+from atendimento import atender_consultas
 from comunicacao import aguardar_resposta
 from validacao import consulta_valida, registro_valido
 
@@ -14,22 +16,27 @@ SERVER_PORT = 5300
 # Cache local em memória
 # Estrutura: { ("dominio", "tipo"): { "registro": {...}, "expires_at": 1786812345 } }
 cache = {}
+trava_cache = Lock()
 
 def check_cache(domain, qtype="A"):
-    now = time.time()
     chave = (domain, qtype)
-    if chave in cache:
+    with trava_cache:
+        now = time.time()
+        if chave not in cache:
+            return None
         registro_cache = cache[chave]
         # TODO: Verificar se o registro ainda está válido comparando now com expires_at
         if now < registro_cache["expires_at"]:
             registro = registro_cache["registro"].copy()
             registro["ttl"] = int(registro_cache["expires_at"] - now)
-            print(f"[CACHE HIT] {domain} ({qtype}) -> {registro['value']}")
-            return registro
         else:
-            print(f"[CACHE EXPIRED] Registro expirado para {domain} ({qtype})")
             del cache[chave]
-    return None
+            registro = None
+    if registro is None:
+        print(f"[CACHE EXPIRED] Registro expirado para {domain} ({qtype})")
+    else:
+        print(f"[CACHE HIT] {domain} ({qtype}) -> {registro['value']}")
+    return registro
 
 def save_to_cache(domain, registro):
     # TODO: Implementar lógica de salvar no cache calculando o expires_at (time.time() + ttl)
@@ -37,11 +44,12 @@ def save_to_cache(domain, registro):
         print(f"[CACHE] Registro inválido para {domain}, não foi armazenado.")
         return
     ttl = registro["ttl"]
-    expires_at = time.time() + ttl
-    cache[(domain, registro["type"])] = {
-        "registro": registro.copy(),
-        "expires_at": expires_at
-    }
+    with trava_cache:
+        expires_at = time.time() + ttl
+        cache[(domain, registro["type"])] = {
+            "registro": registro.copy(),
+            "expires_at": expires_at
+        }
     print(f"[CACHE SAVE] Registrado {domain} ({registro['type']}) -> {registro['value']} por {ttl} segundos.")
 
 def resolve_iterative(domain, qtype="A"):
@@ -178,21 +186,10 @@ def main():
 
     print(f"Local Resolver ativo na porta {RESOLVER_PORT}...")
 
-    while True:
-        data, addr = sock.recvfrom(4096)
-        # Um pacote inválido não deve interromper o atendimento.
-        try:
-            query = json.loads(data.decode('utf-8'))
-        except (UnicodeDecodeError, ValueError, RecursionError) as e:
-            print(f"[RESOLVER] Pacote inválido de {addr}, descartado: {e}")
-            continue
-        response = resolver_consulta(query)
-        if response is None:
-            continue
-        try:
-            sock.sendto(json.dumps(response).encode('utf-8'), addr)
-        except OSError as e:
-            print(f"[RESOLVER] Erro ao enviar resposta para {addr}: {e}")
+    try:
+        atender_consultas(sock, resolver_consulta, "RESOLVER")
+    finally:
+        sock.close()
 
 if __name__ == "__main__":
     main()

@@ -110,14 +110,18 @@ class TestesValidacao(unittest.TestCase):
                 resolver.main()
 
         self.assertEqual(socket_teste.sendto.call_count, 2)
-        for chamada, consulta, endereco in zip(
-                socket_teste.sendto.call_args_list, (primeira, segunda), (origem, outra_origem)):
+        enderecos = {primeira["transaction_id"]: origem, segunda["transaction_id"]: outra_origem}
+        respondidos = set()
+        for chamada in socket_teste.sendto.call_args_list:
             dados, destino = chamada.args
             resposta = json.loads(dados.decode("utf-8"))
-            self.assertEqual(destino, endereco)
-            self.assertEqual(resposta["transaction_id"], consulta["transaction_id"])
+            identificador = resposta["transaction_id"]
+            self.assertIn(identificador, enderecos)
+            self.assertEqual(destino, enderecos[identificador])
             self.assertEqual(resposta["status"], "SUCCESS")
             self.assertEqual(resposta["answer"][0]["value"], "192.0.2.1")
+            respondidos.add(identificador)
+        self.assertEqual(respondidos, set(enderecos))
 
     def test_resolver_continua_atendendo_apos_erro_no_envio(self):
         resolver.save_to_cache("teste.br", self.registro())

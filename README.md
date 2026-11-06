@@ -97,3 +97,19 @@ profundamente aninhado são registrados e descartados. O processo continua
 atendendo as próximas consultas, inclusive quando ocorre uma falha no envio
 de uma resposta UDP.
 
+### Atendimento de consultas simultâneas
+
+O Resolver, Root, TLD e Autoritativo usam a rotina de `atendimento.py`. Cada
+contêiner tem 4 trabalhadores e uma fila FIFO com até 8 consultas aguardando.
+A thread principal recebe e valida os pacotes; os trabalhadores fazem a
+resolução e enviam a resposta ao endereço de origem. Consultas inválidas são
+descartadas antes de entrar na fila. Quando a fila está cheia, novas consultas
+são descartadas sem bloquear o recebimento de outros pacotes.
+
+Os limites ficam nas constantes `NUM_TRABALHADORES` e `LIMITE_FILA` de
+`atendimento.py`. O cache do Resolver é protegido por um `Lock`, liberado antes
+das consultas de rede. As consultas são retiradas da fila na ordem de chegada,
+mas as respostas podem terminar em outra ordem; cada uma mantém o ID do cliente.
+Ao encerrar o serviço, as consultas já aceitas são finalizadas antes de fechar
+o socket. Para carregar as alterações, execute `docker compose restart`.
+
