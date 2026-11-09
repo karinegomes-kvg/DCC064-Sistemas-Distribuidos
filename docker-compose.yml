@@ -14,10 +14,17 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: python dns_server.py
+    command: python -u dns_server.py
+    healthcheck:
+      test: ["CMD", "python", "verificar_prontidao.py", "5300"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
     environment:
       - DNS_ROLE=ROOT
       - DB_PATH=root_db.json
+      - LIMITE_POR_IP=${LIMITE_DNS_POR_IP:-100}
+      - LIMITE_GLOBAL=${LIMITE_DNS_GLOBAL:-200}
     networks:
       dns_network:
         ipv4_address: 172.20.0.100
@@ -28,10 +35,17 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: python dns_server.py
+    command: python -u dns_server.py
+    healthcheck:
+      test: ["CMD", "python", "verificar_prontidao.py", "5300"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
     environment:
       - DNS_ROLE=TLD
       - DB_PATH=tld_db.json
+      - LIMITE_POR_IP=${LIMITE_DNS_POR_IP:-100}
+      - LIMITE_GLOBAL=${LIMITE_DNS_GLOBAL:-200}
     networks:
       dns_network:
         ipv4_address: 172.20.0.101
@@ -42,10 +56,17 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: python dns_server.py
+    command: python -u dns_server.py
+    healthcheck:
+      test: ["CMD", "python", "verificar_prontidao.py", "5300"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
     environment:
       - DNS_ROLE=AUTH
       - DB_PATH=auth_db.json
+      - LIMITE_POR_IP=${LIMITE_DNS_POR_IP:-100}
+      - LIMITE_GLOBAL=${LIMITE_DNS_GLOBAL:-200}
     networks:
       dns_network:
         ipv4_address: 172.20.0.102
@@ -56,9 +77,16 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: python resolver.py
+    command: python -u resolver.py
+    healthcheck:
+      test: ["CMD", "python", "verificar_prontidao.py", "5353"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
     environment:
       - ROOT_DNS_IP=172.20.0.100
+      - LIMITE_POR_IP=${LIMITE_RESOLVER_POR_IP:-20}
+      - LIMITE_GLOBAL=${LIMITE_RESOLVER_GLOBAL:-100}
     networks:
       dns_network:
         ipv4_address: 172.20.0.50
