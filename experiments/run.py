@@ -12,7 +12,10 @@ import selectors
 import socket
 import sys
 import time
-
+import ctypes
+import dns_server
+import resolver
+from atendimento import atender_consultas
 from comunicacao import aguardar_resposta
 
 HOSTS = dict(root="127.0.0.100", tld="127.0.0.101",
@@ -21,9 +24,6 @@ HOSTS = dict(root="127.0.0.100", tld="127.0.0.101",
 
 def server(role, port, workers, cache, protected, logfile, ready):
     # Processos distintos: cache, GIL, filas e cotas independentes por servidor.
-    import dns_server
-    import resolver
-    from atendimento import atender_consultas
     with open(logfile, "w", encoding="utf-8", buffering=1) as log:
         with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             resolver.ROOT_DNS_IP = HOSTS["root"]
@@ -34,10 +34,12 @@ def server(role, port, workers, cache, protected, logfile, ready):
                 "tld": {"ufjf.br": {"type": "NS", "value": HOSTS["auth"]}},
                 "auth": {"www.ufjf.br": {"type": "A", "value": "172.20.0.40", "ttl": ttl}},
             }
+          
             def handle(query, prazo=None):
                 if role == "resolver":
                     return resolver.resolver_consulta(query, prazo=prazo)
                 return dns_server.resolver_consulta(query, databases[role], prazo=prazo)
+              
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.bind((HOSTS[role], port))
                 ready.send(True)
@@ -57,8 +59,7 @@ def topology(folder, workers, cache, protected):
     try:
         for role in HOSTS:
             recv, send = mp.Pipe(duplex=False)
-            proc = mp.Process(target=server, args=(role, port, workers, cache, protected,
-                                                  str(folder / f"{role}.log"), send))
+            proc = mp.Process(target=server, args=(role, port, workers, cache, protected, str(folder / f"{role}.log"), send))
             proc.start()
             processes.append(proc)
             send.close()
@@ -67,6 +68,7 @@ def topology(folder, workers, cache, protected):
                     raise RuntimeError(f"Falha ao iniciar {role}; consulte os logs")
             finally:
                 recv.close()
+              
         # Prova fim a fim e aquecimento fora das amostras.
         query = dict(transaction_id=65535, qname="www.ufjf.br", qtype="A", rd=True)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -92,11 +94,10 @@ def topology(folder, workers, cache, protected):
 
 
 def traffic(endpoint, duration, rate, attack_rate, sources, recursive, timeout):
-    """Carga aberta limitada; respostas não bloqueiam a emissão de consultas."""
-    # O temporizador padrão do Windows pode arredondar select(2 ms) para ~16 ms.
-    # A resolução é restaurada mesmo se o gerador falhar.
+    """Carga aberta limitada; respostas não bloqueiam a emissão de consultas.
+    O temporizador padrão do Windows pode arredondar select(2 ms) para ~16 ms.
+    A resolução é restaurada mesmo se o gerador falhar."""
     if sys.platform == "win32":
-        import ctypes
         timer = ctypes.WinDLL("winmm")
         if timer.timeBeginPeriod(1) != 0:
             raise RuntimeError("Não foi possível ajustar o temporizador do gerador")
@@ -107,7 +108,6 @@ def traffic(endpoint, duration, rate, attack_rate, sources, recursive, timeout):
     finally:
         if timer is not None:
             timer.timeEndPeriod(1)
-
 
 def _traffic(endpoint, duration, rate, attack_rate, sources, recursive, timeout):
     rows, pending, streams = [], {}, []
@@ -147,6 +147,7 @@ def _traffic(endpoint, duration, rate, attack_rate, sources, recursive, timeout)
                         # Não compensa atraso com rajadas: taxa realizada é registrada.
                         stream[3] = now + 1 / rps
                 wake = min([end] if now < end else [now + .01])
+                
                 if now < end:
                     wake = min(wake, *(s[3] for s in streams if s[1] > 0))
                 for key, _ in selector.select(max(0, min(.002, wake - now))):
@@ -174,6 +175,7 @@ def _traffic(endpoint, duration, rate, attack_rate, sources, recursive, timeout)
                             del pending[(sock.fileno(), response["transaction_id"])]
                     except (OSError, ValueError, TypeError):
                         continue
+                
                 now = time.perf_counter()
                 for key, (sent, _, _) in list(pending.items()):
                     if now - sent >= timeout:
@@ -215,12 +217,15 @@ def main():
     parser.add_argument("--timeout", type=float, default=6)
     parser.add_argument("--output", type=Path, default=Path("results") / time.strftime("%Y%m%d-%H%M%S"))
     args = parser.parse_args()
+  
     duration = args.duration if args.duration is not None else (1 if args.quick else 5)
     repetitions = args.repetitions if args.repetitions is not None else (1 if args.quick else 3)
+  
     if not (0 < duration <= 30 and 1 <= repetitions <= 10 and 1 <= args.attack_rate <= 1000
             and 0 < args.timeout <= 6):
         parser.error("Use duração (0,30], repetições [1,10], taxa [1,1000], timeout (0,6]")
     args.output.mkdir(parents=True, exist_ok=False)
+    
     import subprocess
     revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     metadata = dict(python=sys.version, platform=platform.platform(), revision=revision,
@@ -230,22 +235,27 @@ def main():
                     quotas_unprotected=[100000, 100000], clock="perf_counter",
                     windows_timer_ms=1 if sys.platform == "win32" else None,
                     note="Loopback multiprocess; DDoS simulado por IPs locais; escala vertical")
+    
     metadata["source_sha256"] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                                  for path in [*Path('.').glob('*.py'), *Path('experiments').glob('*.py')]}
+    
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     fields = ["case", "suite", "target", "mode", "cache", "workers", "protected", "rate",
               "attack_rate", "sources", "repetition", "phase", "duration_s", "traffic", "source",
               "transaction_id", "sent_s", "latency_ms", "status"]
+    
     with (args.output / "requests.csv").open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
         number = 0
+        
         for suite, target, recursive, cache, workers, rate, protected, sources in cases(args.quick, args.suites):
             for repetition in range(1, repetitions + 1):
                 number += 1
                 folder = args.output / f"case-{number:03}"
                 folder.mkdir()
                 print(f"{number}: {suite} {target} workers={workers} cache={cache} rd={recursive}", flush=True)
+                
                 with topology(folder, workers, cache, protected) as port:
                     phases = ["baseline", "attack", "recovery"] if sources else ["measure"]
                     for phase in phases:
