@@ -22,6 +22,7 @@ services:
       retries: 15
     environment:
       - DNS_ROLE=ROOT
+      - DNS_VERBOSE=${DNS_VERBOSE:-false}
       - DB_PATH=root_db.json
       - LIMITE_POR_IP=${LIMITE_DNS_POR_IP:-100}
       - LIMITE_GLOBAL=${LIMITE_DNS_GLOBAL:-200}
@@ -43,6 +44,7 @@ services:
       retries: 15
     environment:
       - DNS_ROLE=TLD
+      - DNS_VERBOSE=${DNS_VERBOSE:-false}
       - DB_PATH=tld_db.json
       - LIMITE_POR_IP=${LIMITE_DNS_POR_IP:-100}
       - LIMITE_GLOBAL=${LIMITE_DNS_GLOBAL:-200}
@@ -64,6 +66,7 @@ services:
       retries: 15
     environment:
       - DNS_ROLE=AUTH
+      - DNS_VERBOSE=${DNS_VERBOSE:-false}
       - DB_PATH=auth_db.json
       - LIMITE_POR_IP=${LIMITE_DNS_POR_IP:-100}
       - LIMITE_GLOBAL=${LIMITE_DNS_GLOBAL:-200}
@@ -85,6 +88,7 @@ services:
       retries: 15
     environment:
       - ROOT_DNS_IP=172.20.0.100
+      - DNS_VERBOSE=${DNS_VERBOSE:-false}
       - LIMITE_POR_IP=${LIMITE_RESOLVER_POR_IP:-20}
       - LIMITE_GLOBAL=${LIMITE_RESOLVER_GLOBAL:-100}
     networks:

@@ -2,7 +2,9 @@ import json
 import time
 from validacao import resposta_valida
 from prazos import TEMPO_TOTAL, tempo_restante
+from logger_config import configurar_logger #logs
 
+logger = configurar_logger("COMUNICACAO")
 
 def aguardar_resposta(sock, query, servidor, tempo_limite=None, prazo=None):
     if prazo is None:
@@ -18,19 +20,19 @@ def aguardar_resposta(sock, query, servidor, tempo_limite=None, prazo=None):
         tempo_restante(prazo)
 
         if origem != servidor:
-            print(f"[CONSULTA] Resposta de {origem} descartada: servidor diferente de {servidor}.")
+            logger.debug(f"[CONSULTA] Resposta de {origem} descartada: servidor diferente de {servidor}.")
             continue
         try:
             resposta = json.loads(dados.decode('utf-8'))
         except (UnicodeDecodeError, ValueError, RecursionError):
-            print(f"[CONSULTA] Resposta inválida de {servidor} descartada.")
+            logger.debug(f"[CONSULTA] Resposta inválida de {servidor} descartada.")
             continue
 
         if not resposta_valida(resposta):
-            print(f"[CONSULTA] Resposta inválida de {servidor} descartada.")
+            logger.debug(f"[CONSULTA] Resposta inválida de {servidor} descartada.")
             continue
         if resposta["transaction_id"] != query["transaction_id"]:
-            print(f"[CONSULTA] Resposta de {servidor} descartada: ID de outra consulta.")
+            logger.debug(f"[CONSULTA] Resposta de {servidor} descartada: ID de outra consulta.")
             continue
 
         corresponde = True
@@ -46,7 +48,7 @@ def aguardar_resposta(sock, query, servidor, tempo_limite=None, prazo=None):
                     corresponde = False
                     break
         if not corresponde:
-            print(f"[CONSULTA] Resposta de {servidor} descartada: nome ou tipo diferente da consulta.")
+            logger.debug(f"[CONSULTA] Resposta de {servidor} descartada: nome ou tipo diferente da consulta.")
             continue
         tempo_restante(prazo)
         return resposta

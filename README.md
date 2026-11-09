@@ -233,3 +233,15 @@ Para rodar os testes automáticos dos limites, sem depender dos contêineres:
 python3 -B -m unittest discover -s tests -p 'test_controle_carga.py' -v
 ```
 
+### Verificar os logs 
+
+Suba os servidores com:
+
+```bash
+ DNS_VERBOSE=true docker compose up -d --force-recreate
+```
+Rode para acompanhar os logs no terminal:
+
+```bash
+docker compose logs -f
+```

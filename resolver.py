@@ -8,6 +8,8 @@ from atendimento import atender_consultas
 from comunicacao import aguardar_resposta
 from prazos import criar_prazo, tempo_restante
 from validacao import consulta_valida, registro_valido
+from logger_config import configurar_logger #logs
+
 
 # Configurações do Resolver Local
 RESOLVER_PORT = 5353
@@ -18,6 +20,9 @@ SERVER_PORT = 5300
 # Estrutura: { ("dominio", "tipo"): { "registro": {...}, "expires_at": 1786812345 } }
 cache = {}
 trava_cache = Lock()
+
+# Adicionando logs para o resolver
+logger = configurar_logger("RESOLVER")
 
 def check_cache(domain, qtype="A"):
     chave = (domain, qtype)
@@ -34,15 +39,15 @@ def check_cache(domain, qtype="A"):
             del cache[chave]
             registro = None
     if registro is None:
-        print(f"[CACHE EXPIRED] Registro expirado para {domain} ({qtype})")
+        logger.debug(f"[CACHE EXPIRED] Registro expirado para {domain} ({qtype})")
     else:
-        print(f"[CACHE HIT] {domain} ({qtype}) -> {registro['value']}")
+        logger.debug(f"[CACHE HIT] {domain} ({qtype}) -> {registro['value']}")
     return registro
 
 def save_to_cache(domain, registro):
     # TODO: Implementar lógica de salvar no cache calculando o expires_at (time.time() + ttl)
     if not registro_valido(registro) or "ttl" not in registro:
-        print(f"[CACHE] Registro inválido para {domain}, não foi armazenado.")
+        logger.debug(f"[CACHE] Registro inválido para {domain}, não foi armazenado.")
         return
     ttl = registro["ttl"]
     with trava_cache:
@@ -51,7 +56,7 @@ def save_to_cache(domain, registro):
             "registro": registro.copy(),
             "expires_at": expires_at
         }
-    print(f"[CACHE SAVE] Registrado {domain} ({registro['type']}) -> {registro['value']} por {ttl} segundos.")
+    logger.debug(f"[CACHE SAVE] Registrado {domain} ({registro['type']}) -> {registro['value']} por {ttl} segundos.")
 
 def resolve_iterative(domain, qtype="A", prazo=None):
     # Algoritmo de Resolução Iterativa clássico
@@ -61,7 +66,10 @@ def resolve_iterative(domain, qtype="A", prazo=None):
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    print(f"[RESOLVER] Iniciando busca iterativa para '{domain}' ({qtype}) a partir do Root: {current_dns}")
+    logger.debug(
+    f"Iniciando busca iterativa para '{domain}' ({qtype}) "
+    f"a partir do Root: {current_dns}"
+   )
 
     while True:
         # TODO: 1. Montar a mensagem Query JSON com rd=False (iterativa)
@@ -105,10 +113,10 @@ def resolve_iterative(domain, qtype="A", prazo=None):
                 if not servidores:
                     break
                 current_dns = servidores[0]["value"]
-                print(f"[RESOLVER] Indicado para o próximo servidor (Referral): {current_dns}")
+                logger.debug(f"[RESOLVER] Indicado para o próximo servidor (Referral): {current_dns}")
             # - Se "NXDOMAIN": Encerrar a busca, domínio inexistente.
             elif status == "NXDOMAIN":
-                print(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
+                logger.debug(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
                 break
             else:
                 break
@@ -116,7 +124,7 @@ def resolve_iterative(domain, qtype="A", prazo=None):
             sock.close()
             raise
         except Exception as e:
-            print(f"[RESOLVER] Erro durante a resolução: {e}")
+            logger.error(f"[RESOLVER] Erro durante a resolução: {e}")
             break
 
     sock.close()
@@ -133,7 +141,7 @@ def resolver_recursivo(domain, qtype="A", prazo=None):
         "rd": True
     }
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    print(f"[RESOLVER] Iniciando busca recursiva para '{domain}' ({qtype}) pelo Root: {ROOT_DNS_IP}")
+    logger.debug(f"[RESOLVER] Iniciando busca recursiva para '{domain}' ({qtype}) pelo Root: {ROOT_DNS_IP}")
 
     try:
         restante = tempo_restante(prazo)
@@ -152,20 +160,20 @@ def resolver_recursivo(domain, qtype="A", prazo=None):
             save_to_cache(domain, registro)
             return registro
         elif response["status"] == "NXDOMAIN":
-            print(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
+            logger.debug(f"[RESOLVER] Domínio {domain} inexistente (NXDOMAIN).")
         else:
-            print("[RESOLVER] O Root retornou encaminhamento em uma consulta recursiva.")
+            logger.debug(f"[RESOLVER] O Root retornou encaminhamento em uma consulta recursiva.")
     except socket.timeout:
         raise
     except Exception as e:
-        print(f"[RESOLVER] Erro durante a resolução: {e}")
+        logger.error(f"[RESOLVER] Erro durante a resolução: {e}")
     finally:
         sock.close()
     return None
 
 def resolver_consulta(query, prazo=None):
     if not consulta_valida(query):
-        print("[RESOLVER] Consulta descartada: ID, domínio, rd ou tempo restante inválido.")
+        logger.error("[RESOLVER] Consulta descartada: ID, domínio, rd ou tempo restante inválido.")
         return None
     if prazo is None:
         prazo = criar_prazo(query)
@@ -194,7 +202,7 @@ def resolver_consulta(query, prazo=None):
             else:
                 registro = resolve_iterative(domain, qtype, prazo=prazo)
         except socket.timeout:
-            print(f"[RESOLVER] Prazo total esgotado para '{domain}' ({qtype}).")
+            logger.error(f"[RESOLVER] Prazo total esgotado para '{domain}' ({qtype}).")
             return None
     if registro is not None:
         response["status"] = "SUCCESS"
@@ -206,7 +214,7 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', RESOLVER_PORT))
 
-    print(f"Local Resolver ativo na porta {RESOLVER_PORT}...")
+    logger.info(f"Local Resolver ativo na porta {RESOLVER_PORT}...")
 
     try:
         atender_consultas(sock, resolver_consulta, "RESOLVER")

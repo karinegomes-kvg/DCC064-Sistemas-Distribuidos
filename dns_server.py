@@ -6,16 +6,20 @@ from atendimento import atender_consultas
 from comunicacao import aguardar_resposta
 from prazos import criar_prazo, tempo_restante
 from validacao import consulta_valida, registro_valido
+from logger_config import configurar_logger #logs
 
 # Porta padrão de escuta dos servidores DNS internos
 PORT = 5300
+
+# Adicionando logs para o dns_server
+logger = configurar_logger(os.getenv("DNS_ROLE", "DNS"))
 
 def load_db(filepath):
     try:
         with open(filepath, 'r') as f:
             return json.load(f)
     except Exception as e:
-        print(f"Erro ao carregar banco de dados local: {e}")
+        logger.error(f"Erro ao carregar banco de dados local: {e}")
         return {}
 
 # TODO 4. Se a requisição for RECURSIVA (rd = True) e o nó intermediário precisar buscar recursiva
@@ -33,19 +37,31 @@ def query_upstream(server_ip, qname, qtype, rd, prazo=None):
         restante = tempo_restante(prazo)
         query["tempo_restante"] = restante
         sock.settimeout(restante)
+        
+        logger.debug(
+        f"Enviando consulta para {server_ip}: "
+        f"{qname} ({qtype}), ID={query['transaction_id']}, RD={rd}"
+        )
+
         sock.sendto(json.dumps(query).encode('utf-8'), (server_ip, PORT))
-        return aguardar_resposta(sock, query, (server_ip, PORT), prazo=prazo)
+        response = aguardar_resposta(sock, query, (server_ip, PORT), prazo=prazo)
+
+        logger.debug(
+        f"Resposta recebida de {server_ip}: status={response.get('status')}"
+        )
+        return response
+
     except socket.timeout:
         raise
     except Exception as e:
-        print(f"Erro ao consultar servidor upstream ({server_ip}): {e}")
+        logger.error(f"Erro ao consultar servidor upstream ({server_ip}): {e}")
         return None
     finally:
         sock.close()
 
 def resolver_consulta(query, db, prazo=None):
     if not consulta_valida(query):
-        print("[DNS] Consulta descartada: ID, domínio, rd ou tempo restante inválido.")
+        logger.error("[DNS] Consulta descartada: ID, domínio, rd ou tempo restante inválido.")
         return None
     if prazo is None:
         prazo = criar_prazo(query)
@@ -107,7 +123,7 @@ def resolver_consulta(query, db, prazo=None):
         try:
             upstream_resp = query_upstream(record["value"], qname, qtype, rd=True, prazo=prazo)
         except socket.timeout:
-            print(f"[DNS] Prazo total esgotado para '{qname}' ({qtype}).")
+            logger.error(f"[DNS] Prazo total esgotado para '{qname}' ({qtype}).")
             return None
         if upstream_resp:
             response = upstream_resp
@@ -128,7 +144,7 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', PORT))
 
-    print(f"Servidor Mini-DNS iniciado como papel [{role}] escutando na porta {PORT}...")
+    logger.info(f"Servidor Mini-DNS iniciado como papel [{role}] escutando na porta {PORT}...")
     try:
         atender_consultas(sock, processar_consulta, role)
     finally:
