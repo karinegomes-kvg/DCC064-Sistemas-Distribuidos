@@ -1,7 +1,7 @@
 import unittest
 
-from experiments.report import percentile, summarize
-from experiments.run import cases
+from experiment.report import percentile, summarize
+from experiment.run import cases
 
 
 class ExperimentTests(unittest.TestCase):
