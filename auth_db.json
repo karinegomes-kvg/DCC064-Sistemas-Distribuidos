@@ -3,5 +3,10 @@
     "type": "A",
     "value": "172.20.0.40",
     "ttl": 15
+  },
+  "www.google.com" : {
+    "type": "A",
+    "value": "180.25.1.40",
+    "ttl": 10
   }
 }
