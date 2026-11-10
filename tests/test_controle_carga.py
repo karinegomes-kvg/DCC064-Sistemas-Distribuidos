@@ -1,6 +1,10 @@
 import json
+from pathlib import Path
+import sys
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from atendimento import atender_consultas
 from controle_carga import ControleCarga
@@ -80,9 +84,9 @@ class TestesControleCarga(unittest.TestCase):
 
 class TestesLimitesAtendimento(unittest.TestCase):
     def setUp(self):
-        self.substituicao_print = patch("builtins.print")
-        self.imprimir = self.substituicao_print.start()
-        self.addCleanup(self.substituicao_print.stop)
+        self.substituicao_logger = patch("atendimento.logger")
+        self.logger = self.substituicao_logger.start()
+        self.addCleanup(self.substituicao_logger.stop)
 
     def pacote(self, identificador, ip, porta):
         consulta = {"transaction_id": identificador, "qname": "teste.br",
@@ -117,11 +121,11 @@ class TestesLimitesAtendimento(unittest.TestCase):
                                   limite_por_ip=1, limite_global=3)
         self.assertEqual(interpretar.call_count, 2)
         self.assertEqual(self.ids_respondidos(socket_teste), [2, 3])
-        avisos = [chamada for chamada in self.imprimir.call_args_list
+        avisos = [chamada for chamada in self.logger.warning.call_args_list
                   if "Limite de carga:" in chamada.args[0]]
         self.assertEqual(len(avisos), 1)
         self.assertTrue(any("por IP=1, globais=2" in chamada.args[0]
-                            for chamada in self.imprimir.call_args_list))
+                            for chamada in self.logger.info.call_args_list))
 
     def test_configuracao_do_ambiente_e_recuperacao_apos_um_segundo(self):
         socket_teste = Mock()
@@ -146,7 +150,7 @@ class TestesLimitesAtendimento(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     atender_consultas(socket_teste, self.processar, "TESTE", trabalhadores=1)
         self.assertEqual(self.ids_respondidos(socket_teste), [1, 4])
-        avisos = [chamada for chamada in self.imprimir.call_args_list
+        avisos = [chamada for chamada in self.logger.warning.call_args_list
                   if "Limite de carga:" in chamada.args[0]]
         self.assertEqual(len(avisos), 2)
 
