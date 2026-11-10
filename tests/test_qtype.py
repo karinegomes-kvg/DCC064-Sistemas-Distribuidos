@@ -83,6 +83,25 @@ class TestesTiposConsulta(unittest.TestCase):
         self.assertEqual([ip for ip, _ in self.rede.enviadas],
                          [self.rede.raiz, self.rede.tld, self.rede.autoritativo])
 
+    def test_novos_registros_google_com_sao_resolvidos(self):
+        dominios = (
+            "mail.google.com",
+            "drive.google.com",
+            "maps.google.com",
+            "docs.google.com",
+            "photos.google.com",
+        )
+        for dominio in dominios:
+            with self.subTest(dominio=dominio):
+                self.rede.enviadas.clear()
+                resposta = resolver.resolver_consulta(self.consulta(dominio, "A"))
+                valor = self.rede.bases[self.rede.autoritativo][dominio]["value"]
+                self.conferir_resposta(resposta, dominio, "A", valor)
+                self.assertEqual(
+                    [ip for ip, _ in self.rede.enviadas],
+                    [self.rede.raiz, self.rede.tld, self.rede.autoritativo],
+                )
+
     def test_cada_etapa_gera_id_e_resposta_mantem_id_do_cliente(self):
         with patch("resolver.secrets.randbits", side_effect=[0, 32768, 65535]) as gerar_id:
             resposta = resolver.resolver_consulta(self.consulta("www.ufjf.br", "A"))
@@ -188,7 +207,7 @@ class TestesTiposConsulta(unittest.TestCase):
 
     def test_consulta_recursiva_inexistente_retorna_nxdomain(self):
         for dominio, tipo, servidores in (
-            ("google.com", "A", [self.rede.raiz]),
+            ("google.com", "A", [self.rede.raiz, self.rede.tld, self.rede.autoritativo]),
             ("www.ufjf.br", "NS", [self.rede.raiz, self.rede.tld, self.rede.autoritativo]),
         ):
             with self.subTest(dominio=dominio, tipo=tipo):

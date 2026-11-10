@@ -49,6 +49,19 @@ python3 client_test.py br --qtype NS
 python3 client_test.py ufjf.br --qtype NS
 ```
 
+Estes nomes de teste estão configurados na zona simulada `google.com`:
+
+```bash
+python3 consulta.py mail.google.com
+python3 consulta.py drive.google.com
+python3 consulta.py maps.google.com
+python3 consulta.py docs.google.com
+python3 consulta.py photos.google.com
+```
+
+Os endereços `192.0.2.10` a `192.0.2.14` são valores reservados para documentação
+e servem apenas como respostas de teste do Mini-DNS.
+
 Sem opções adicionais, a busca é iterativa. Para usar resolução recursiva:
 
 ```bash

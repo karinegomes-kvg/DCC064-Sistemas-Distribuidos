@@ -274,7 +274,7 @@ def main():
                         # Drena respostas pendentes e libera janela de cotas antes da próxima fase.
                         if sources:
                             time.sleep(1.05)
-    from experiment.report import generate
+    from experiments.report import generate
     generate(args.output)
     print(f"Resultados: {args.output.resolve()}")
 
